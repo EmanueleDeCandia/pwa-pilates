@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="116" fill="#4A6759"/>
+  <circle cx="256" cy="256" r="168" stroke="#F8F6F2" stroke-opacity="0.24" stroke-width="6"/>
+  <!-- Arco armonico ispirato al movimento Pilates, Reformer carriage e respiro -->
+  <path
+    d="M148 324C178 214 236 156 320 156C352 156 374 176 374 204C374 248 314 282 232 296C190 303 162 326 154 356"
+    stroke="#F8F6F2"
+    stroke-width="22"
+    stroke-linecap="round"
+  />
+  <path
+    d="M196 356C236 334 292 326 356 340"
+    stroke="#E5C9B8"
+    stroke-width="16"
+    stroke-linecap="round"
+  />
+  <circle cx="244" cy="146" r="22" fill="#E5C9B8"/>
+</svg>

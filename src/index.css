@@ -1,0 +1,84 @@
+@import "tailwindcss";
+@import "@fontsource/cormorant-garamond/500.css";
+@import "@fontsource/cormorant-garamond/600.css";
+@import "@fontsource/cormorant-garamond/500-italic.css";
+@import "@fontsource/plus-jakarta-sans/400.css";
+@import "@fontsource/plus-jakarta-sans/500.css";
+@import "@fontsource/plus-jakarta-sans/600.css";
+@import "@fontsource/plus-jakarta-sans/700.css";
+
+@layer base {
+  :root {
+    --bg-linen: #f8f6f2;
+    --bg-sand: #f1ece3;
+    --bg-surface: #ffffff;
+    --border-stone: #e8e2d9;
+    --border-stone-strong: #d8cfc2;
+    --ink-primary: #23201d;
+    --ink-secondary: #625b52;
+    --ink-muted: #8e867b;
+    --sage: #4a6759;
+    --sage-dark: #3a5347;
+    --sage-soft: #edf2ee;
+    --clay: #b86b52;
+    --clay-soft: #f9efea;
+    --ochre: #a87328;
+    --ochre-soft: #fcf4e6;
+    --crimson: #b5443a;
+    --crimson-soft: #fbeceb;
+    --slate-blue: #4b6b82;
+    --slate-soft: #ebf1f5;
+  }
+
+  html {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background-color: var(--bg-linen);
+    color: var(--ink-primary);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background-color: var(--bg-linen);
+    color: var(--ink-primary);
+  }
+
+  button:not(:disabled),
+  a,
+  select {
+    cursor: pointer;
+  }
+}
+
+.font-display {
+  font-family: 'Cormorant Garamond', Georgia, 'Times New Roman', serif;
+  letter-spacing: -0.01em;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.safe-bottom {
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+}
+
+/* Scrollbar discreta color pietra calda */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d8cfc2;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #bfb3a2;
+}
