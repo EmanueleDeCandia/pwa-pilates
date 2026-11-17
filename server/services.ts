@@ -1476,6 +1476,39 @@ export function buildAdminDashboard(
   const countTable = (tbl: string) =>
     Number((db.prepare(`SELECT COUNT(*) AS c FROM ${tbl}`).get() as { c: number }).c);
 
+  // Per l'Analitica Frequenza Pacchetti:
+  // Se uno studente ha rinnovato in anticipo, il pacchetto attivo in consumo (che ha lo storico presenze)
+  // calcola matematicamente le lezioni residue complessive (es. 1 + 10 = 11 residue)
+  // e i pacchetti con presenze hanno la priorita rispetto a pacchetti futuri in coda ancora non avviati.
+  const studentQueuedCredits = new Map<string, number>();
+  for (const p of allPackages) {
+    if (p.is_queued_renewal) {
+      studentQueuedCredits.set(
+        p.student_id,
+        (studentQueuedCredits.get(p.student_id) || 0) + p.remaining_credits
+      );
+    }
+  }
+
+  const packageAnalytics = allPackages
+    .map((p) => {
+      if (p.is_consuming && studentQueuedCredits.has(p.student_id)) {
+        const extra = studentQueuedCredits.get(p.student_id)!;
+        return {
+          ...p,
+          remaining_credits: p.remaining_credits + extra,
+        };
+      }
+      return p;
+    })
+    .sort((a, b) => {
+      if (a.is_consuming && !b.is_consuming) return -1;
+      if (!a.is_consuming && b.is_consuming) return 1;
+      if (a.is_queued_renewal && !b.is_queued_renewal) return 1;
+      if (!a.is_queued_renewal && b.is_queued_renewal) return -1;
+      return b.purchase_date.localeCompare(a.purchase_date);
+    });
+
   return {
     today_lessons: todayLessons,
     absent_pending_queue: absentPendingQueue,
@@ -1495,7 +1528,7 @@ export function buildAdminDashboard(
       total_remaining_credits: totalRemainingCredits,
       attendance_rate_pct: attendanceRatePct,
     },
-    package_analytics: allPackages,
+    package_analytics: packageAnalytics,
     room_occupancy: roomOccupancy,
     occupancy_matrix: occupancyMatrix,
     occupancy_period: occupancyPeriod,

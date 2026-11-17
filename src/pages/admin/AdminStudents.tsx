@@ -391,109 +391,7 @@ export function AdminStudents({ notify, syncTick }: AdminStudentsProps) {
 
                 {/* Riepilogo pacchetto attivo o rinnovo anticipato */}
                 <div className="rounded-xl bg-[#F8F6F2] border border-[#EAE4DA] p-3.5">
-                  {hasEarlyRenewal && queuedPkgs.length > 0 ? (
-                    <div className="space-y-2.5">
-                      {/* Header Rinnovo Anticipato */}
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="inline-flex items-center gap-1.5 rounded-full border border-[#D5E2D9] bg-[#EDF4F0] px-2.5 py-0.5 text-[10px] font-semibold text-[#2F6649]">
-                          <Layers className="h-3 w-3 text-[#4A6759]" />
-                          Rinnovo anticipato attivo
-                        </span>
-                        <span className="text-[10px] text-[#8E867B] tabular-nums">
-                          {activeWithCredits.length || 2} pacchetti attivi
-                        </span>
-                      </div>
-
-                      {/* Saldo Complessivo */}
-                      <div className="flex items-baseline justify-between rounded-lg bg-white border border-[#EAE4DA] px-3 py-2">
-                        <span className="text-xs text-[#625B52]">Totale lezioni disponibili</span>
-                        <span className="text-sm font-bold text-[#2F6649] tabular-nums">
-                          {totalRemainingCredits} lezioni residue
-                        </span>
-                      </div>
-
-                      {/* Dettaglio pacchetti: In consumo ora + In coda */}
-                      <div className="space-y-1.5 pt-0.5">
-                        {currentConsumingPkg && (
-                          <div className="rounded-lg border border-[#E2DACD] bg-[#FCFBF9] p-2.5 space-y-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-[11px] font-semibold text-[#23201D] truncate">
-                                {currentConsumingPkg.name}
-                              </span>
-                              <span className="rounded bg-[#EAF4EE] px-1.5 py-0.5 text-[9px] font-bold text-[#2F6649] uppercase tracking-wide">
-                                In consumo (FIFO)
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between text-[11px] tabular-nums">
-                              <span className="text-[#8E867B]">
-                                {currentConsumingPkg.used_credits}/{currentConsumingPkg.total_credits} utilizzate
-                              </span>
-                              <span className="font-bold text-[#A63A31]">
-                                {currentConsumingPkg.remaining_credits} {currentConsumingPkg.remaining_credits === 1 ? 'residua' : 'residue'}
-                              </span>
-                            </div>
-                            <div className="flex justify-end pt-0.5">
-                              <button
-                                type="button"
-                                onClick={() => openEditPackage(currentConsumingPkg)}
-                                className="text-[10px] font-medium text-[#625B52] hover:text-[#23201D] underline underline-offset-2"
-                              >
-                                Gestisci pacchetto in corso
-                              </button>
-                            </div>
-                          </div>
-                        )}
-
-                        {queuedPkgs.map((qp) => {
-                          const qpm = PAYMENT_META[qp.payment_status];
-                          return (
-                            <div
-                              key={qp.id}
-                              className="rounded-lg border border-[#EAE4DA] bg-white p-2.5 space-y-1"
-                            >
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-[11px] font-semibold text-[#23201D] truncate">
-                                  {qp.name}
-                                </span>
-                                <div className="flex items-center gap-1">
-                                  {qpm && (
-                                    <span
-                                      className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold ${qpm.bg} ${qpm.text} ${qpm.border}`}
-                                    >
-                                      {qpm.label}
-                                    </span>
-                                  )}
-                                  <span className="rounded bg-[#F4F0E8] px-1.5 py-0.5 text-[9px] font-bold text-[#7D5C2C] uppercase tracking-wide">
-                                    In coda
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="flex items-center justify-between text-[11px] tabular-nums">
-                                <span className="text-[#8E867B]">
-                                  Acquistato {formatDateNumeric(qp.purchase_date)}
-                                </span>
-                                <span className="font-semibold text-[#2F6649]">
-                                  +{qp.remaining_credits} pronte
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between pt-0.5">
-                                <span className="text-[10px] text-[#8E867B] italic">
-                                  Subentra all'esaurimento del precedente
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => openEditPackage(qp)}
-                                  className="text-[10px] font-medium text-[#625B52] hover:text-[#23201D] underline underline-offset-2"
-                                >
-                                  Gestisci
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  ) : pkg ? (
+                  {pkg ? (
                     <div className="space-y-2">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-xs font-semibold text-[#23201D] truncate">
@@ -515,10 +413,10 @@ export function AdminStudents({ notify, syncTick }: AdminStudentsProps) {
                         </span>
                         <span
                           className={`font-bold ${
-                            pkg.remaining_credits <= 2 ? 'text-[#A63A31]' : 'text-[#4A6759]'
+                            totalRemainingCredits <= 2 ? 'text-[#A63A31]' : 'text-[#4A6759]'
                           }`}
                         >
-                          {pkg.remaining_credits}/{pkg.total_credits} residue
+                          {totalRemainingCredits}/{pkg.total_credits} residue
                         </span>
                       </div>
                       <div className="flex items-center justify-between pt-1">
@@ -529,7 +427,7 @@ export function AdminStudents({ notify, syncTick }: AdminStudentsProps) {
                         >
                           Gestisci pagamento / crediti
                         </button>
-                        {pkg.remaining_credits <= 2 && (
+                        {totalRemainingCredits <= 2 && (
                           <button
                             type="button"
                             onClick={() => openNewPackage(s.id)}
