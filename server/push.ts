@@ -3,6 +3,7 @@ import path from 'node:path';
 import webpush from 'web-push';
 import { ensureDataDir, getDb } from './db.js';
 import { sendRealtimePushAlert } from './realtime.js';
+import { getStudioNow } from './services.js';
 
 interface VapidKeys {
   publicKey: string;
@@ -94,11 +95,11 @@ function formatTimeHHMM(iso: string): string {
 /**
  * Cron-job server-side (SRS 4.3):
  * 1) 60 minuti prima di start_time -> Promemoria turno e sala assegnata
- * 2) 15 minuti dopo end_time (se is_validated = 0) -> Promemoria validazione appello
+ * 2) 5 minuti dopo end_time (se is_validated = 0) -> Promemoria validazione appello
  */
 export async function runReminderSchedulerTick(): Promise<void> {
   const db = getDb();
-  const nowMs = Date.now();
+  const { nowMs } = getStudioNow();
 
   // 1. Lezioni in partenza tra 55 e 65 minuti
   const preFrom = new Date(nowMs + 55 * 60_000).toISOString();
@@ -134,16 +135,16 @@ export async function runReminderSchedulerTick(): Promise<void> {
     });
   }
 
-  // 2. Lezioni terminate da 15-45 minuti e non ancora validate
-  const postFrom = new Date(nowMs - 45 * 60_000).toISOString();
-  const postTo = new Date(nowMs - 15 * 60_000).toISOString();
+  // 2. Lezioni terminate da 5-25 minuti e non ancora validate
+  const postFrom = new Date(nowMs - 25 * 60_000).toISOString();
+  const postTo = new Date(nowMs - 5 * 60_000).toISOString();
 
   const unvalidatedSlots = db
     .prepare(
       `SELECT ls.id, ls.title, ls.end_time, ls.teacher_id, r.name AS room_name
        FROM lesson_slots ls
        JOIN rooms r ON r.id = ls.room_id
-       LEFT JOIN sent_notifications sn ON sn.lesson_slot_id = ls.id AND sn.kind = 'POST_15M'
+       LEFT JOIN sent_notifications sn ON sn.lesson_slot_id = ls.id AND (sn.kind = 'POST_5M' OR sn.kind = 'POST_15M')
        WHERE sn.lesson_slot_id IS NULL
          AND ls.is_validated = 0
          AND ls.end_time >= ? AND ls.end_time <= ?`
@@ -158,12 +159,12 @@ export async function runReminderSchedulerTick(): Promise<void> {
 
   for (const slot of unvalidatedSlots) {
     db.prepare(
-      `INSERT OR IGNORE INTO sent_notifications (lesson_slot_id, kind) VALUES (?, 'POST_15M')`
+      `INSERT OR IGNORE INTO sent_notifications (lesson_slot_id, kind) VALUES (?, 'POST_5M')`
     ).run(slot.id);
     await dispatchTeacherNotification(slot.teacher_id, {
       title: `Conferma Appello: ${slot.title}`,
-      body: `La lezione in ${slot.room_name} è terminata da 15 min. Ricorda di chiudere l'appello.`,
-      tag: `post15-${slot.id}`,
+      body: `La lezione in ${slot.room_name} è terminata da 5 min. Ricorda di chiudere l'appello.`,
+      tag: `post5-${slot.id}`,
       url: `/?lesson=${slot.id}`,
       lessonSlotId: slot.id,
     });

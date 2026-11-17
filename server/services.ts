@@ -73,23 +73,35 @@ export function translateSqliteError(err: unknown): AppError {
 }
 
 /**
+ * Restituisce l'orario corrente allineato al fuso orario locale dello studio (es. Italia UTC+1/UTC+2)
+ * in modo coerente con i timestamp memorizzati nel database SQLite (ISO con suffisso 'Z').
+ */
+export function getStudioNow(): { nowMs: number; nowIso: string } {
+  const d = new Date();
+  const offsetMs = d.getTimezoneOffset() * 60_000;
+  const studioMs = d.getTime() - offsetMs;
+  const studioIso = new Date(studioMs).toISOString();
+  return { nowMs: studioMs, nowIso: studioIso };
+}
+
+/**
  * Calcolo semaforo operativo lezione (SRS 4.4.1):
  * - GREEN: appello validato
- * - YELLOW: lezione in corso oppure terminata da <= 15 minuti
- * - RED: lezione terminata da > 15 minuti e non ancora validata
+ * - YELLOW: lezione in corso oppure terminata da <= 5 minuti
+ * - RED: lezione terminata da > 5 minuti e non ancora validata
  * - UPCOMING: lezione futura non ancora iniziata
  */
 export function computeTrafficLight(
   startTimeIso: string,
   endTimeIso: string,
   isValidated: boolean,
-  nowMs: number = Date.now()
+  nowMs: number = getStudioNow().nowMs
 ): TrafficLightStatus {
   if (isValidated) return 'GREEN';
   const startMs = new Date(startTimeIso).getTime();
   const endMs = new Date(endTimeIso).getTime();
   if (nowMs < startMs) return 'UPCOMING';
-  if (nowMs <= endMs + 15 * 60_000) return 'YELLOW';
+  if (nowMs <= endMs + 5 * 60_000) return 'YELLOW';
   return 'RED';
 }
 
@@ -178,7 +190,7 @@ export function queryLessonSlots(
   }
   if (filters.onlyUnvalidatedPast) {
     clauses.push('ls.end_time <= ?');
-    params.push(new Date().toISOString());
+    params.push(getStudioNow().nowIso);
     clauses.push(
       `(ls.is_validated = 0 OR EXISTS (
         SELECT 1 FROM bookings bx WHERE bx.lesson_slot_id = ls.id AND bx.attendance_status = 'PENDING'
@@ -223,7 +235,7 @@ export function queryLessonSlots(
     )
     .all(...params) as Record<string, unknown>[];
 
-  const nowMs = Date.now();
+  const nowMs = getStudioNow().nowMs;
   const isAdmin = actor.role === 'ADMIN';
 
   return rows.map((row) => {
