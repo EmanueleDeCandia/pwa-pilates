@@ -428,10 +428,10 @@ export function AdminAuditExport({
               </div>
               <p className="text-2xl font-bold text-[#23201D] tabular-nums">
                 {filteredAttendance.length}{' '}
-                <span className="text-xs font-normal text-[#8E867B]">registrazioni</span>
+                <span className="text-xs font-normal text-[#8E867B]">registrazioni totali</span>
               </p>
               <p className="text-[11px] text-[#2F6649] font-medium tabular-nums">
-                {presentsCount} presenze convalidate ({attendanceRate}%)
+                {presentsCount} presenze convalidate ad oggi ({attendanceRate}%)
               </p>
             </div>
 
