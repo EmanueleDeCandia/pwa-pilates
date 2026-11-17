@@ -6,6 +6,7 @@ import type {
   ActionQueueItem,
   AdminBookingView,
   AdminDashboardData,
+  AttendanceRegistryRecord,
   AttendanceStatus,
   AuditLogEntry,
   AuthUser,
@@ -1937,4 +1938,145 @@ export function getExportDatasets(db: DatabaseSync) {
   };
 
   return { packagesSheet, revenueSheet, attendanceSheet };
+}
+
+/**
+ * Query completa per il Registro Presenze Studio a video con filtri e calcoli economici/orari.
+ */
+export function queryAttendanceRegistry(
+  db: DatabaseSync,
+  filters: {
+    studentId?: string;
+    teacherId?: string;
+    attendanceStatus?: string;
+    paymentStatus?: string;
+    startDate?: string;
+    endDate?: string;
+    limit?: number;
+  } = {}
+): AttendanceRegistryRecord[] {
+  const clauses: string[] = ['1=1'];
+  const params: (string | number)[] = [];
+
+  if (filters.studentId) {
+    clauses.push('b.student_id = ?');
+    params.push(filters.studentId);
+  }
+  if (filters.teacherId) {
+    clauses.push('ls.teacher_id = ?');
+    params.push(filters.teacherId);
+  }
+  if (filters.attendanceStatus && filters.attendanceStatus !== 'ALL') {
+    clauses.push('b.attendance_status = ?');
+    params.push(filters.attendanceStatus);
+  }
+  if (filters.paymentStatus && filters.paymentStatus !== 'ALL') {
+    clauses.push('p.payment_status = ?');
+    params.push(filters.paymentStatus);
+  }
+  if (filters.startDate) {
+    clauses.push('ls.start_time >= ?');
+    params.push(filters.startDate);
+  }
+  if (filters.endDate) {
+    clauses.push('ls.start_time <= ?');
+    params.push(filters.endDate);
+  }
+
+  const limitClause = filters.limit ? `LIMIT ${Number(filters.limit)}` : '';
+
+  const rows = db
+    .prepare(
+      `SELECT
+        b.id,
+        b.lesson_slot_id,
+        ls.start_time,
+        ls.end_time,
+        ls.title AS lesson_title,
+        ls.is_targeted,
+        ls.is_validated,
+        ls.validated_at,
+        r.id AS room_id,
+        r.name AS room_name,
+        u.id AS teacher_id,
+        u.full_name AS teacher_name,
+        u.color AS teacher_color,
+        u.phone AS teacher_phone,
+        s.id AS student_id,
+        s.first_name AS student_first_name,
+        s.last_name AS student_last_name,
+        s.phone AS student_phone,
+        b.attendance_status,
+        b.reschedule_note,
+        p.id AS package_id,
+        p.name AS package_name,
+        p.price AS package_price,
+        p.amount_paid AS package_amount_paid,
+        p.payment_status AS package_payment_status,
+        p.total_credits AS package_total_credits,
+        p.used_credits AS package_used_credits,
+        p.status AS package_status
+      FROM bookings b
+      JOIN lesson_slots ls ON ls.id = b.lesson_slot_id
+      JOIN rooms r ON r.id = ls.room_id
+      JOIN users u ON u.id = ls.teacher_id
+      JOIN students s ON s.id = b.student_id
+      JOIN packages p ON p.id = b.package_id
+      WHERE ${clauses.join(' AND ')}
+      ORDER BY ls.start_time DESC, s.last_name ASC
+      ${limitClause}`
+    )
+    .all(...params) as Record<string, unknown>[];
+
+  return rows.map((r) => {
+    const startTime = String(r.start_time);
+    const endTime = String(r.end_time);
+    const startMs = new Date(startTime).getTime();
+    const endMs = new Date(endTime).getTime();
+    const durationMinutes = Math.max(0, Math.round((endMs - startMs) / 60_000));
+    const durationHours = Math.round((durationMinutes / 60) * 100) / 100;
+
+    const price = Number(r.package_price);
+    const amountPaid = Number(r.package_amount_paid);
+    const balanceDue = Math.max(0, Math.round((price - amountPaid) * 100) / 100);
+
+    const totalCredits = Number(r.package_total_credits);
+    const usedCredits = Number(r.package_used_credits);
+    const remainingCredits = Math.max(0, totalCredits - usedCredits);
+
+    return {
+      id: String(r.id),
+      lesson_slot_id: String(r.lesson_slot_id),
+      start_time: startTime,
+      end_time: endTime,
+      duration_minutes: durationMinutes,
+      duration_hours: durationHours,
+      lesson_title: String(r.lesson_title),
+      is_targeted: Boolean(r.is_targeted),
+      is_validated: Boolean(r.is_validated),
+      validated_at: r.validated_at ? String(r.validated_at) : null,
+      room_id: String(r.room_id),
+      room_name: String(r.room_name),
+      teacher_id: String(r.teacher_id),
+      teacher_name: String(r.teacher_name),
+      teacher_color: String(r.teacher_color),
+      teacher_phone: r.teacher_phone ? String(r.teacher_phone) : null,
+      student_id: String(r.student_id),
+      student_first_name: String(r.student_first_name),
+      student_last_name: String(r.student_last_name),
+      student_phone: r.student_phone ? String(r.student_phone) : null,
+      attendance_status: String(r.attendance_status) as AttendanceStatus,
+      reschedule_note: r.reschedule_note ? String(r.reschedule_note) : null,
+      package_id: String(r.package_id),
+      package_name: String(r.package_name),
+      package_price: price,
+      package_amount_paid: amountPaid,
+      package_balance_due: balanceDue,
+      package_payment_status: String(r.package_payment_status) as PaymentStatus,
+      package_total_credits: totalCredits,
+      package_used_credits: usedCredits,
+      package_remaining_credits: remainingCredits,
+      package_status: String(r.package_status) as PackageStatus,
+    };
+  });
 }

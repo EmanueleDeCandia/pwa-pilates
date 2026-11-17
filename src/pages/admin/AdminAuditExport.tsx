@@ -1,23 +1,38 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  CalendarCheck,
+  CheckCircle2,
+  Clock,
+  CreditCard,
   Database,
   Download,
   FileSpreadsheet,
   FileText,
   Filter,
+  GraduationCap,
   History,
   RotateCcw,
   Save,
+  Search,
   ShieldCheck,
+  Sparkles,
+  Users,
 } from 'lucide-react';
 import { apiFetch, downloadAuthenticatedFile, setStoredToken } from '../../lib/api';
 import {
+  ATTENDANCE_META,
   AUDIT_ACTION_LABELS,
+  PAYMENT_META,
+  buildWhatsAppUrl,
+  formatCurrency,
   formatDateNumeric,
+  formatDateShort,
   formatTime,
+  formatTimeRange,
 } from '../../lib/format';
 import type {
   AdminDashboardData,
+  AttendanceRegistryRecord,
   AuditLogEntry,
   AuthUser,
   StudioSettings,
@@ -41,7 +56,7 @@ export function AdminAuditExport({
   notify,
   syncTick,
 }: AdminAuditExportProps) {
-  const [section, setSection] = useState<'audit' | 'export' | 'database'>('audit');
+  const [section, setSection] = useState<'attendance' | 'audit' | 'export' | 'database'>('attendance');
   const [logs, setLogs] = useState<AuditLogEntry[]>([]);
   const [actorFilter, setActorFilter] = useState('ALL');
   const [actionFilter, setActionFilter] = useState('ALL');
@@ -51,6 +66,29 @@ export function AdminAuditExport({
   const [savingSettings, setSavingSettings] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetting, setResetting] = useState(false);
+
+  // Registro Presenze Studio
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRegistryRecord[]>([]);
+  const [loadingAttendance, setLoadingAttendance] = useState(false);
+  const [attSearch, setAttSearch] = useState('');
+  const [attTeacherFilter, setAttTeacherFilter] = useState('ALL');
+  const [attStudentFilter, setAttStudentFilter] = useState('ALL');
+  const [attStatusFilter, setAttStatusFilter] = useState('ALL');
+  const [attPaymentFilter, setAttPaymentFilter] = useState('ALL');
+  const [attPeriodFilter, setAttPeriodFilter] = useState<'ALL' | 'THIS_MONTH' | 'LAST_7_DAYS' | 'TODAY' | 'FUTURE'>('ALL');
+  const [showTeacherSummary, setShowTeacherSummary] = useState(false);
+
+  const loadAttendance = useCallback(async () => {
+    setLoadingAttendance(true);
+    try {
+      const res = await apiFetch<{ records: AttendanceRegistryRecord[] }>('/api/reports/attendance');
+      setAttendanceRecords(res.records || []);
+    } catch {
+      // ignore
+    } finally {
+      setLoadingAttendance(false);
+    }
+  }, []);
 
   const loadLogs = useCallback(async () => {
     const q = new URLSearchParams({ limit: '150' });
@@ -78,6 +116,10 @@ export function AdminAuditExport({
   }, []);
 
   useEffect(() => {
+    loadAttendance();
+  }, [loadAttendance]);
+
+  useEffect(() => {
     loadLogs();
   }, [loadLogs]);
 
@@ -87,10 +129,11 @@ export function AdminAuditExport({
 
   useEffect(() => {
     if (syncTick > 0) {
+      loadAttendance();
       loadLogs();
       if (section === 'database') loadMeta();
     }
-  }, [syncTick]);
+  }, [syncTick, section, loadAttendance, loadLogs, loadMeta]);
 
   const triggerDownload = async (url: string, filename: string, label: string) => {
     try {
@@ -154,6 +197,170 @@ export function AdminAuditExport({
     return parts.join(' · ') || '—';
   };
 
+  // Calcoli per il Registro Presenze Studio
+  const now = new Date();
+  const todayIso = now.toISOString().slice(0, 10);
+  const monthStartIso = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+    .toISOString()
+    .slice(0, 10);
+  const sevenDaysAgoIso = new Date(now.getTime() - 7 * 86_400_000).toISOString().slice(0, 10);
+
+  const filteredAttendance = attendanceRecords.filter((r) => {
+    if (attTeacherFilter !== 'ALL' && r.teacher_id !== attTeacherFilter) return false;
+    if (attStudentFilter !== 'ALL' && r.student_id !== attStudentFilter) return false;
+    if (attStatusFilter !== 'ALL' && r.attendance_status !== attStatusFilter) return false;
+    if (attPaymentFilter !== 'ALL' && r.package_payment_status !== attPaymentFilter) return false;
+
+    const rDate = r.start_time.slice(0, 10);
+    if (attPeriodFilter === 'TODAY' && rDate !== todayIso) return false;
+    if (attPeriodFilter === 'THIS_MONTH' && rDate < monthStartIso) return false;
+    if (attPeriodFilter === 'LAST_7_DAYS' && (rDate < sevenDaysAgoIso || rDate > todayIso))
+      return false;
+    if (attPeriodFilter === 'FUTURE' && rDate < todayIso) return false;
+
+    if (attSearch.trim()) {
+      const q = attSearch.toLowerCase();
+      const matchStudent = `${r.student_first_name} ${r.student_last_name}`.toLowerCase().includes(q);
+      const matchCourse = r.lesson_title.toLowerCase().includes(q);
+      const matchRoom = r.room_name.toLowerCase().includes(q);
+      const matchPackage = r.package_name.toLowerCase().includes(q);
+      const matchTeacher = r.teacher_name.toLowerCase().includes(q);
+      if (!matchStudent && !matchCourse && !matchRoom && !matchPackage && !matchTeacher)
+        return false;
+    }
+    return true;
+  });
+
+  // Metriche generali aggregate sul filtro
+  const totalSlotsCount = new Set(filteredAttendance.map((r) => r.lesson_slot_id)).size;
+  const presentsCount = filteredAttendance.filter((r) => r.attendance_status === 'PRESENT').length;
+  const absentDeductedCount = filteredAttendance.filter(
+    (r) => r.attendance_status === 'ABSENT_DEDUCTED'
+  ).length;
+  const absentFrozenCount = filteredAttendance.filter(
+    (r) => r.attendance_status === 'ABSENT_FROZEN'
+  ).length;
+  const pendingCount = filteredAttendance.filter((r) => r.attendance_status === 'PENDING').length;
+  const evaluatedCount = presentsCount + absentDeductedCount + absentFrozenCount;
+  const attendanceRate =
+    evaluatedCount > 0 ? Math.round((presentsCount / evaluatedCount) * 100) : 100;
+
+  // Ore validate vs programmate (calcolate da durate lezioni uniche)
+  const uniqueFilteredSlots = Array.from(
+    new Map(
+      filteredAttendance.map((r) => [
+        r.lesson_slot_id,
+        { duration_hours: r.duration_hours, is_validated: r.is_validated },
+      ])
+    ).values()
+  );
+  const totValidatedHours =
+    Math.round(
+      uniqueFilteredSlots
+        .filter((s) => s.is_validated)
+        .reduce((acc, s) => acc + s.duration_hours, 0) * 10
+    ) / 10;
+  const totScheduledHours =
+    Math.round(uniqueFilteredSlots.reduce((acc, s) => acc + s.duration_hours, 0) * 10) / 10;
+
+  // Dati economici per pacchetti coinvolti (senza duplicare i pacchetti per riga)
+  const uniquePackagesMap = new Map<
+    string,
+    { price: number; amount_paid: number; balance_due: number }
+  >();
+  for (const r of filteredAttendance) {
+    if (!uniquePackagesMap.has(r.package_id)) {
+      uniquePackagesMap.set(r.package_id, {
+        price: r.package_price,
+        amount_paid: r.package_amount_paid,
+        balance_due: r.package_balance_due,
+      });
+    }
+  }
+  const uniquePkgs = Array.from(uniquePackagesMap.values());
+  const totContracted = Math.round(uniquePkgs.reduce((acc, p) => acc + p.price, 0) * 100) / 100;
+  const totCollected =
+    Math.round(uniquePkgs.reduce((acc, p) => acc + p.amount_paid, 0) * 100) / 100;
+  const totBalanceDue =
+    Math.round(uniquePkgs.reduce((acc, p) => acc + p.balance_due, 0) * 100) / 100;
+
+  // Elenco studenti per menu a tendina
+  const studentOptions = Array.from(
+    new Map(
+      attendanceRecords.map((r) => [
+        r.student_id,
+        `${r.student_last_name} ${r.student_first_name}`,
+      ])
+    ).entries()
+  ).sort((a, b) => a[1].localeCompare(b[1]));
+
+  // Rendiconto insegnanti calcolato da formule esistenti
+  const allKnownTeachers = [
+    {
+      id: user.id,
+      full_name: user.full_name,
+      color: user.color || '#4A6759',
+      phone: user.phone || '',
+    },
+    ...teachers,
+  ];
+
+  const teacherAnalytics = allKnownTeachers.map((t) => {
+    const tRows = filteredAttendance.filter((r) => r.teacher_id === t.id);
+    const tSlotMap = new Map<
+      string,
+      { duration: number; is_validated: boolean; title: string; room: string; start: string }
+    >();
+    for (const r of tRows) {
+      if (!tSlotMap.has(r.lesson_slot_id)) {
+        tSlotMap.set(r.lesson_slot_id, {
+          duration: r.duration_hours,
+          is_validated: r.is_validated,
+          title: r.lesson_title,
+          room: r.room_name,
+          start: r.start_time,
+        });
+      }
+    }
+    const tSlots = Array.from(tSlotMap.values());
+    const valHours =
+      Math.round(
+        tSlots.filter((s) => s.is_validated).reduce((acc, s) => acc + s.duration, 0) * 10
+      ) / 10;
+    const progHours =
+      Math.round(
+        tSlots.filter((s) => !s.is_validated).reduce((acc, s) => acc + s.duration, 0) * 10
+      ) / 10;
+    const valLessons = tSlots.filter((s) => s.is_validated).length;
+    const progLessons = tSlots.filter((s) => !s.is_validated).length;
+
+    const presents = tRows.filter((r) => r.attendance_status === 'PRESENT').length;
+    const absDeducted = tRows.filter((r) => r.attendance_status === 'ABSENT_DEDUCTED').length;
+    const absFrozen = tRows.filter((r) => r.attendance_status === 'ABSENT_FROZEN').length;
+    const pending = tRows.filter((r) => r.attendance_status === 'PENDING').length;
+    const evaluated = presents + absDeducted + absFrozen;
+    const rate = evaluated > 0 ? Math.round((presents / evaluated) * 100) : 100;
+
+    return {
+      id: t.id,
+      name: t.full_name,
+      color: t.color,
+      phone: t.phone,
+      totalSlots: tSlots.length,
+      valLessons,
+      progLessons,
+      valHours,
+      progHours,
+      totalHours: Math.round((valHours + progHours) * 10) / 10,
+      totalBookings: tRows.length,
+      presents,
+      absDeducted,
+      absFrozen,
+      pending,
+      attendanceRate: rate,
+    };
+  });
+
   return (
     <div className="space-y-6">
       <div>
@@ -161,12 +368,22 @@ export function AdminAuditExport({
           Controllo Attività, Contabilità &amp; Ambiente Locale
         </p>
         <h1 className="font-display text-3xl sm:text-4xl font-semibold text-[#23201D] mt-0.5">
-          Audit Log, Esportazioni &amp; Database
+          Audit Log, Registro Studio &amp; Database
         </h1>
       </div>
 
       {/* Sub-navigation */}
       <div className="inline-flex flex-wrap rounded-xl bg-[#EFEAE1] p-1 text-xs font-medium gap-1">
+        <button
+          type="button"
+          onClick={() => setSection('attendance')}
+          className={`inline-flex items-center gap-1.5 rounded-lg px-4 py-2 transition-all ${
+            section === 'attendance' ? 'bg-white text-[#23201D] shadow-xs' : 'text-[#625B52]'
+          }`}
+        >
+          <CalendarCheck className="h-3.5 w-3.5 text-[#4A6759]" />
+          Registro Presenze Studio
+        </button>
         <button
           type="button"
           onClick={() => setSection('audit')}
@@ -198,6 +415,467 @@ export function AdminAuditExport({
           Database Locale &amp; Studio
         </button>
       </div>
+
+      {/* TAB 0: REGISTRO PRESENZE STUDIO (REPORTING DETTAGLIATO) */}
+      {section === 'attendance' && (
+        <div className="space-y-5">
+          {/* CRUSCOTTO KPI FORMULE AGGREGATE */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="rounded-2xl border border-[#E8E2D9] bg-white p-4 space-y-1">
+              <div className="flex items-center justify-between text-xs text-[#8E867B]">
+                <span>Iscrizioni &amp; Presenze</span>
+                <Users className="h-4 w-4 text-[#4A6759]" />
+              </div>
+              <p className="text-2xl font-bold text-[#23201D] tabular-nums">
+                {filteredAttendance.length}{' '}
+                <span className="text-xs font-normal text-[#8E867B]">registrazioni</span>
+              </p>
+              <p className="text-[11px] text-[#2F6649] font-medium tabular-nums">
+                {presentsCount} presenze convalidate ({attendanceRate}%)
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-[#E8E2D9] bg-white p-4 space-y-1">
+              <div className="flex items-center justify-between text-xs text-[#8E867B]">
+                <span>Monte Ore Insegnanti</span>
+                <Clock className="h-4 w-4 text-[#4A6759]" />
+              </div>
+              <p className="text-2xl font-bold text-[#23201D] tabular-nums">
+                {totValidatedHours}h{' '}
+                <span className="text-xs font-normal text-[#8E867B]">validate</span>
+              </p>
+              <p className="text-[11px] text-[#625B52] tabular-nums">
+                su {totScheduledHours}h programmate in {totalSlotsCount} corsi
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-[#E8E2D9] bg-white p-4 space-y-1">
+              <div className="flex items-center justify-between text-xs text-[#8E867B]">
+                <span>Incassato Allievi</span>
+                <CreditCard className="h-4 w-4 text-[#2F6649]" />
+              </div>
+              <p className="text-2xl font-bold text-[#2F6649] tabular-nums">
+                {formatCurrency(totCollected)}
+              </p>
+              <p className="text-[11px] text-[#8E867B] tabular-nums">
+                su {formatCurrency(totContracted)} pattuiti ({uniquePkgs.length} pacchetti)
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-[#E8E2D9] bg-white p-4 space-y-1">
+              <div className="flex items-center justify-between text-xs text-[#8E867B]">
+                <span>Residuo da Saldare</span>
+                <CreditCard className="h-4 w-4 text-[#B86B52]" />
+              </div>
+              <p
+                className={`text-2xl font-bold tabular-nums ${
+                  totBalanceDue > 0 ? 'text-[#A63A31]' : 'text-[#2F6649]'
+                }`}
+              >
+                {formatCurrency(totBalanceDue)}
+              </p>
+              <p className="text-[11px] text-[#8E867B] tabular-nums">
+                {uniquePkgs.filter((p) => p.balance_due > 0).length} allievi con pendenze
+              </p>
+            </div>
+          </div>
+
+          {/* BARRA FILTRI DINAMICI & TOGGLE RENDICONTO DOCENTI */}
+          <div className="rounded-2xl border border-[#E8E2D9] bg-white p-4 sm:p-5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Filter className="h-4 w-4 text-[#4A6759]" />
+                <h3 className="text-sm font-semibold text-[#23201D]">
+                  Filtri e Ricerca Registro Presenze
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowTeacherSummary((v) => !v)}
+                  className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold transition-all ${
+                    showTeacherSummary
+                      ? 'bg-[#4A6759] text-white shadow-xs'
+                      : 'border border-[#DED6C8] bg-[#F8F6F2] text-[#4A6759] hover:bg-[#EAE4DA]'
+                  }`}
+                >
+                  <GraduationCap className="h-3.5 w-3.5" />
+                  {showTeacherSummary ? 'Torna al Registro Singolo' : 'Riepilogo Ore Docenti'}
+                </button>
+                {(attTeacherFilter !== 'ALL' ||
+                  attStudentFilter !== 'ALL' ||
+                  attStatusFilter !== 'ALL' ||
+                  attPaymentFilter !== 'ALL' ||
+                  attPeriodFilter !== 'ALL' ||
+                  attSearch.trim()) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAttTeacherFilter('ALL');
+                      setAttStudentFilter('ALL');
+                      setAttStatusFilter('ALL');
+                      setAttPaymentFilter('ALL');
+                      setAttPeriodFilter('ALL');
+                      setAttSearch('');
+                    }}
+                    className="text-xs text-[#A63A31] hover:underline"
+                  >
+                    Azzera filtri
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
+              {/* Ricerca Testuale */}
+              <div className="sm:col-span-2 relative">
+                <Search className="h-3.5 w-3.5 absolute left-3 top-3 text-[#8E867B]" />
+                <input
+                  type="text"
+                  placeholder="Cerca allievo, corso o sala..."
+                  value={attSearch}
+                  onChange={(e) => setAttSearch(e.target.value)}
+                  className="w-full rounded-xl border border-[#DED6C8] bg-[#FCFBF9] pl-8 pr-3 py-2 text-xs text-[#23201D] placeholder:text-[#8E867B]"
+                />
+              </div>
+
+              {/* Filtro Docente */}
+              <div>
+                <select
+                  value={attTeacherFilter}
+                  onChange={(e) => setAttTeacherFilter(e.target.value)}
+                  className="w-full rounded-xl border border-[#DED6C8] bg-[#FCFBF9] px-2.5 py-2 text-xs text-[#23201D]"
+                >
+                  <option value="ALL">Tutte le insegnanti</option>
+                  <option value={user.id}>{user.full_name} (Titolare)</option>
+                  {teachers.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.full_name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filtro Studente */}
+              <div>
+                <select
+                  value={attStudentFilter}
+                  onChange={(e) => setAttStudentFilter(e.target.value)}
+                  className="w-full rounded-xl border border-[#DED6C8] bg-[#FCFBF9] px-2.5 py-2 text-xs text-[#23201D]"
+                >
+                  <option value="ALL">Tutti gli allievi</option>
+                  {studentOptions.map(([id, name]) => (
+                    <option key={id} value={id}>
+                      {name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Filtro Esito Presenza */}
+              <div>
+                <select
+                  value={attStatusFilter}
+                  onChange={(e) => setAttStatusFilter(e.target.value)}
+                  className="w-full rounded-xl border border-[#DED6C8] bg-[#FCFBF9] px-2.5 py-2 text-xs text-[#23201D]"
+                >
+                  <option value="ALL">Tutti gli esiti</option>
+                  <option value="PRESENT">Presenti</option>
+                  <option value="ABSENT_DEDUCTED">Assenze scalate</option>
+                  <option value="ABSENT_FROZEN">Assenze congelate (recupero)</option>
+                  <option value="ABSENT_PENDING_DECISION">In attesa decisione</option>
+                  <option value="RESCHEDULE_REQUESTED">Spostamento richiesto</option>
+                  <option value="PENDING">In programma</option>
+                </select>
+              </div>
+
+              {/* Filtro Stato Pagamento */}
+              <div>
+                <select
+                  value={attPaymentFilter}
+                  onChange={(e) => setAttPaymentFilter(e.target.value)}
+                  className="w-full rounded-xl border border-[#DED6C8] bg-[#FCFBF9] px-2.5 py-2 text-xs text-[#23201D]"
+                >
+                  <option value="ALL">Tutti i pagamenti</option>
+                  <option value="PAID">Saldato</option>
+                  <option value="PARTIAL">Acconto / Parziale</option>
+                  <option value="UNPAID">Da saldare</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Filtro Temporale Rapido */}
+            <div className="flex flex-wrap items-center gap-1.5 pt-1 text-xs">
+              <span className="text-[#8E867B] text-[11px] mr-1">Periodo:</span>
+              {[
+                { id: 'ALL', label: 'Tutto lo storico' },
+                { id: 'THIS_MONTH', label: 'Questo mese' },
+                { id: 'LAST_7_DAYS', label: 'Ultimi 7 giorni' },
+                { id: 'TODAY', label: 'Oggi' },
+                { id: 'FUTURE', label: 'Lezioni future' },
+              ].map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => setAttPeriodFilter(p.id as any)}
+                  className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+                    attPeriodFilter === p.id
+                      ? 'bg-[#4A6759] text-white'
+                      : 'bg-[#F4F0E8] text-[#625B52] hover:bg-[#EAE4DA]'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+              <span className="text-[11px] text-[#8E867B] ml-auto tabular-nums">
+                Visualizzati <strong>{filteredAttendance.length}</strong> record
+              </span>
+            </div>
+          </div>
+
+          {/* VISTA A: RENDICONTO DOCENTI (FORMULE AGGREGATE DA DATI ESISTENTI) */}
+          {showTeacherSummary ? (
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-[#C6DACD] bg-[#F4F8F5] p-4 text-xs text-[#2F6649] flex items-center justify-between">
+                <span>
+                  Rendiconto orario e rendimento delle docenti calcolato automaticamente dai registri
+                  delle lezioni selezionate.
+                </span>
+                <span className="font-semibold tabular-nums">
+                  {teacherAnalytics.reduce((a, t) => a + t.totalHours, 0).toFixed(1)} ore totali
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {teacherAnalytics.map((t) => (
+                  <div
+                    key={t.id}
+                    className="rounded-2xl border border-[#E8E2D9] bg-white p-5 space-y-4"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="h-3 w-3 rounded-full"
+                          style={{ backgroundColor: t.color }}
+                        />
+                        <h4 className="font-semibold text-sm text-[#23201D]">{t.name}</h4>
+                      </div>
+                      <span className="rounded-full bg-[#F4F0E8] px-2 py-0.5 text-[10px] font-bold text-[#625B52]">
+                        {t.phone || 'Staff'}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-center">
+                      <div className="rounded-xl bg-[#F8F6F2] border border-[#EAE4DA] p-2.5">
+                        <p className="text-xl font-bold text-[#2F6649] tabular-nums">
+                          {t.valHours}h
+                        </p>
+                        <p className="text-[10px] text-[#8E867B]">
+                          Ore validate ({t.valLessons} corsi)
+                        </p>
+                      </div>
+                      <div className="rounded-xl bg-[#F8F6F2] border border-[#EAE4DA] p-2.5">
+                        <p className="text-xl font-bold text-[#625B52] tabular-nums">
+                          {t.progHours}h
+                        </p>
+                        <p className="text-[10px] text-[#8E867B]">
+                          In programma ({t.progLessons} corsi)
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 pt-1 border-t border-[#F0EBE1] text-xs">
+                      <div className="flex items-center justify-between text-[#625B52]">
+                        <span>Iscrizioni allievi totali:</span>
+                        <strong className="text-[#23201D] tabular-nums">{t.totalBookings}</strong>
+                      </div>
+                      <div className="flex items-center justify-between text-[#625B52]">
+                        <span>Presenze effettive:</span>
+                        <strong className="text-[#2F6649] tabular-nums">{t.presents}</strong>
+                      </div>
+                      <div className="flex items-center justify-between text-[#625B52]">
+                        <span>Assenze (scalate / congelate):</span>
+                        <strong className="text-[#B86B52] tabular-nums">
+                          {t.absDeducted} / {t.absFrozen}
+                        </strong>
+                      </div>
+                      <div className="flex items-center justify-between text-[#625B52]">
+                        <span>Tasso frequenza allievi:</span>
+                        <span className="font-bold text-[#2F6649] tabular-nums">
+                          {t.attendanceRate}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            /* VISTA B: TABELLA REGISTRO PRESENZE COMPLETA */
+            <div className="rounded-2xl border border-[#E8E2D9] bg-white overflow-hidden shadow-xs">
+              {loadingAttendance ? (
+                <div className="p-8 text-center text-xs text-[#8E867B]">
+                  Caricamento registro presenze in corso...
+                </div>
+              ) : filteredAttendance.length === 0 ? (
+                <div className="p-8 text-center text-xs text-[#8E867B]">
+                  Nessuna lezione o presenza corrisponde ai filtri selezionati.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead>
+                      <tr className="border-b border-[#E8E2D9] bg-[#F8F6F2] text-[11px] font-semibold text-[#8E867B] uppercase tracking-wider">
+                        <th className="py-3 px-4">Data &amp; Orario</th>
+                        <th className="py-3 px-4">Corso &amp; Sala</th>
+                        <th className="py-3 px-4">Docente &amp; Appello</th>
+                        <th className="py-3 px-4">Allievo</th>
+                        <th className="py-3 px-4">Contabilità Pacchetto</th>
+                        <th className="py-3 px-4">Esito Presenza</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#F0EBE1]">
+                      {filteredAttendance.map((r) => {
+                        const pm = PAYMENT_META[r.package_payment_status];
+                        const am = ATTENDANCE_META[r.attendance_status];
+                        const wa = r.student_phone
+                          ? buildWhatsAppUrl(
+                              r.student_phone,
+                              `Ciao ${r.student_first_name}, ti contattiamo da Atelier Élan in merito alla lezione di ${r.lesson_title}.`
+                            )
+                          : null;
+
+                        return (
+                          <tr key={r.id} className="hover:bg-[#FCFBF9] transition-colors">
+                            {/* 1. DATA E ORA */}
+                            <td className="py-3.5 px-4 whitespace-nowrap">
+                              <p className="font-semibold text-[#23201D] tabular-nums">
+                                {formatDateNumeric(r.start_time)}
+                              </p>
+                              <p className="text-[11px] text-[#625B52] tabular-nums">
+                                {formatTimeRange(r.start_time, r.end_time)} ·{' '}
+                                <span className="text-[#8E867B]">{r.duration_hours}h</span>
+                              </p>
+                            </td>
+
+                            {/* 2. CORSO E SALA */}
+                            <td className="py-3.5 px-4">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-semibold text-[#23201D]">
+                                  {r.lesson_title}
+                                </span>
+                                {r.is_targeted && (
+                                  <span className="rounded bg-[#F5EBE6] px-1.5 py-0.5 text-[10px] font-bold text-[#9A4B34]">
+                                    Mirato
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-[#8E867B] mt-0.5">{r.room_name}</p>
+                            </td>
+
+                            {/* 3. DOCENTE E APPELLO */}
+                            <td className="py-3.5 px-4 whitespace-nowrap">
+                              <div className="flex items-center gap-1.5">
+                                <span
+                                  className="h-2.5 w-2.5 rounded-full shrink-0"
+                                  style={{ backgroundColor: r.teacher_color }}
+                                />
+                                <span className="text-[#23201D] font-medium">{r.teacher_name}</span>
+                              </div>
+                              <div className="mt-1">
+                                {r.is_validated ? (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#2F6649] bg-[#EAF4EE] px-2 py-0.5 rounded-full">
+                                    <CheckCircle2 className="h-3 w-3" />
+                                    Chiuso{' '}
+                                    {r.validated_at
+                                      ? `alle ${formatTime(r.validated_at)}`
+                                      : ''}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 text-[10px] font-medium text-[#8D6B26] bg-[#FAF3E5] px-2 py-0.5 rounded-full border border-[#ECD9B3]">
+                                    <Clock className="h-3 w-3" />
+                                    {r.start_time < now.toISOString()
+                                      ? 'Da convalidare'
+                                      : 'In programma'}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* 4. ALLIEVO */}
+                            <td className="py-3.5 px-4 whitespace-nowrap">
+                              <p className="font-semibold text-[#23201D]">
+                                {r.student_last_name} {r.student_first_name}
+                              </p>
+                              {r.student_phone && (
+                                <div className="flex items-center gap-1 mt-0.5 text-[11px] text-[#8E867B]">
+                                  <span>{r.student_phone}</span>
+                                  {wa && (
+                                    <a
+                                      href={wa}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="text-[#4A6759] hover:underline text-[10px] ml-1"
+                                    >
+                                      WhatsApp
+                                    </a>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+
+                            {/* 5. CONTABILITA PACCHETTO & CREDITI (FORMULE DI CALCOLO) */}
+                            <td className="py-3.5 px-4">
+                              <p className="font-medium text-[#23201D] truncate max-w-[200px]">
+                                {r.package_name}
+                              </p>
+                              <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                                {r.package_payment_status === 'PAID' ? (
+                                  <span className="rounded-full bg-[#EAF4EE] px-2 py-0.5 text-[10px] font-bold text-[#2F6649]">
+                                    Saldato ({formatCurrency(r.package_price)})
+                                  </span>
+                                ) : r.package_payment_status === 'PARTIAL' ? (
+                                  <span className="rounded-full bg-[#FAF3E5] px-2 py-0.5 text-[10px] font-bold text-[#8D6B26] border border-[#ECD9B3]">
+                                    Acconto {formatCurrency(r.package_amount_paid)} · Residuo{' '}
+                                    {formatCurrency(r.package_balance_due)}
+                                  </span>
+                                ) : (
+                                  <span className="rounded-full bg-[#FBECEB] px-2 py-0.5 text-[10px] font-bold text-[#A63A31]">
+                                    Da saldare {formatCurrency(r.package_balance_due)}
+                                  </span>
+                                )}
+                                <span className="text-[11px] text-[#625B52] tabular-nums font-semibold">
+                                  {r.package_remaining_credits}/{r.package_total_credits} res.
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* 6. ESITO PRESENZA */}
+                            <td className="py-3.5 px-4 whitespace-nowrap">
+                              <span
+                                className={`inline-flex rounded-full px-2.5 py-0.5 font-bold ${
+                                  am ? `${am.bg} ${am.text}` : 'bg-[#EAE4DA] text-[#625B52]'
+                                }`}
+                              >
+                                {am ? am.label : r.attendance_status}
+                              </span>
+                              {r.reschedule_note && (
+                                <p className="mt-1 text-[11px] text-[#625B52] italic max-w-xs truncate">
+                                  &ldquo;{r.reschedule_note}&rdquo;
+                                </p>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* TAB 1: AUDIT LOG FILTRABILE (SRS 2.7 & 4.4.6) */}
       {section === 'audit' && (

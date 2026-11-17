@@ -27,6 +27,7 @@ import {
   generateTeacherIcsFeed,
   getExportDatasets,
   getStudioSettings,
+  queryAttendanceRegistry,
   queryAuditLogs,
   queryBookingsForLesson,
   queryLessonSlots,
@@ -1774,6 +1775,23 @@ export function createApiRouter(): Router {
       limit: req.query.limit ? Number(req.query.limit) : 150,
     });
     res.json({ logs });
+  });
+
+  router.get('/reports/attendance', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const records = queryAttendanceRegistry(getDb(), {
+        studentId: req.query.studentId ? String(req.query.studentId) : undefined,
+        teacherId: req.query.teacherId ? String(req.query.teacherId) : undefined,
+        attendanceStatus: req.query.attendanceStatus ? String(req.query.attendanceStatus) : undefined,
+        paymentStatus: req.query.paymentStatus ? String(req.query.paymentStatus) : undefined,
+        startDate: req.query.startDate ? String(req.query.startDate) : undefined,
+        endDate: req.query.endDate ? String(req.query.endDate) : undefined,
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+      });
+      res.json({ records });
+    } catch (err) {
+      handleError(res, err);
+    }
   });
 
   router.get('/settings', requireAuth, requireAdmin, (_req, res) => {

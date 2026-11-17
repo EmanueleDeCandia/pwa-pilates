@@ -181,6 +181,41 @@ export interface AuditLogEntry {
   created_at: string;
 }
 
+export interface AttendanceRegistryRecord {
+  id: string;
+  lesson_slot_id: string;
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+  duration_hours: number;
+  lesson_title: string;
+  is_targeted: boolean;
+  is_validated: boolean;
+  validated_at: string | null;
+  room_id: string;
+  room_name: string;
+  teacher_id: string;
+  teacher_name: string;
+  teacher_color: string;
+  teacher_phone: string | null;
+  student_id: string;
+  student_first_name: string;
+  student_last_name: string;
+  student_phone: string | null;
+  attendance_status: AttendanceStatus;
+  reschedule_note: string | null;
+  package_id: string;
+  package_name: string;
+  package_price: number;
+  package_amount_paid: number;
+  package_balance_due: number;
+  package_payment_status: PaymentStatus;
+  package_total_credits: number;
+  package_used_credits: number;
+  package_remaining_credits: number;
+  package_status: PackageStatus;
+}
+
 export interface ActionQueueItem {
   booking_id: string;
   lesson_slot_id: string;
