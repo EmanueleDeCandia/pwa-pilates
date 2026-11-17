@@ -53,6 +53,11 @@ export interface Student {
   medical_notes: string;
   created_at: string;
   active_package?: PackageWithStats | null;
+  active_packages?: PackageWithStats[];
+  current_consuming_package?: PackageWithStats | null;
+  queued_packages?: PackageWithStats[];
+  total_remaining_credits?: number;
+  has_early_renewal?: boolean;
   packages_count?: number;
   total_unpaid_balance?: number;
 }
@@ -75,6 +80,8 @@ export interface Package {
   purchase_date: string;
   expiration_date: string | null;
   status: PackageStatus;
+  is_consuming?: boolean;
+  is_queued_renewal?: boolean;
 }
 
 export interface PackageWithStats extends Package {

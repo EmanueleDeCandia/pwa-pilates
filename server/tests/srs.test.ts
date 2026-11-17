@@ -460,6 +460,51 @@ async function runTests(): Promise<void> {
           camillaSummary.json.unvalidated_past_lessons.length > 0)
     );
 
+    // [7] Verifica Rinnovo Anticipato Pacchetti (Presentazione lezioni rimanenti)
+    const stdsBefore = await api('/api/students', { token: adminToken });
+    const studentToRenew = stdsBefore.json.students.find(
+      (s: any) => s.active_package && s.active_package.remaining_credits > 0
+    );
+    const prevRemaining = studentToRenew.active_package.remaining_credits;
+
+    // Emette un rinnovo anticipato prima di terminare le lezioni disponibili
+    const renewPkgRes = await api('/api/packages', {
+      method: 'POST',
+      token: adminToken,
+      body: {
+        student_id: studentToRenew.id,
+        name: 'Rinnovo Pacchetto 10 Lezioni Pilates',
+        total_credits: 10,
+        price: 180,
+        payment_status: 'PAID',
+        amount_paid: 180,
+      },
+    });
+    check('Emissione rinnovo anticipato pacchetto registrata con successo (201)', renewPkgRes.status === 201);
+
+    const stdsRes = await api('/api/students', { token: adminToken });
+    const earlyStudent = stdsRes.json.students.find((s: any) => s.id === studentToRenew.id);
+    check(
+      'Anagrafica Studenti rileva rinnovo anticipato con lezioni residue cumulate (has_early_renewal & total_remaining_credits)',
+      earlyStudent &&
+        earlyStudent.has_early_renewal === true &&
+        earlyStudent.total_remaining_credits === prevRemaining + 10 &&
+        earlyStudent.current_consuming_package.id === studentToRenew.active_package.id &&
+        earlyStudent.queued_packages.length === 1
+    );
+
+    const pkgsListRes = await api('/api/packages', { token: adminToken });
+    const hasConsuming = pkgsListRes.json.packages.some(
+      (p: any) => p.student_id === studentToRenew.id && p.is_consuming === true
+    );
+    const hasQueued = pkgsListRes.json.packages.some(
+      (p: any) => p.student_id === studentToRenew.id && p.is_queued_renewal === true
+    );
+    check(
+      'Registro Pacchetti distingue pacchetto in consumo FIFO e rinnovo in coda',
+      hasConsuming && hasQueued
+    );
+
     console.log(`\nTutte le ${passed} verifiche SRS superate con successo!\n`);
   } finally {
     server.close();

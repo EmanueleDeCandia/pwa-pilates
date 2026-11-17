@@ -1039,7 +1039,7 @@ export function queryPackagesWithStats(
 
   const todayIso = new Date().toISOString().slice(0, 10);
 
-  return rows.map((r) => {
+  const mapped: PackageWithStats[] = rows.map((r) => {
     const totalCredits = Number(r.total_credits);
     const usedCredits = Number(r.used_credits);
     const remaining = Math.max(0, totalCredits - usedCredits);
@@ -1082,8 +1082,32 @@ export function queryPackagesWithStats(
       reschedule_requested_count: Number(r.reschedule_requested_count),
       pending_bookings_count: Number(r.pending_bookings_count),
       total_absences: absentDeducted + absentFrozen + absentPending,
+      is_consuming: false,
+      is_queued_renewal: false,
     };
   });
+
+  // Calcolo stato di consumo FIFO e rinnovi in coda per ciascun allievo
+  const byStudent = new Map<string, PackageWithStats[]>();
+  for (const p of mapped) {
+    if (!byStudent.has(p.student_id)) byStudent.set(p.student_id, []);
+    byStudent.get(p.student_id)!.push(p);
+  }
+
+  for (const [, pList] of byStudent) {
+    const activeWithCredits = pList
+      .filter((p) => p.status === 'ACTIVE' && p.remaining_credits > 0)
+      .sort((a, b) => a.purchase_date.localeCompare(b.purchase_date));
+
+    if (activeWithCredits.length > 0) {
+      activeWithCredits[0].is_consuming = true;
+      for (let i = 1; i < activeWithCredits.length; i++) {
+        activeWithCredits[i].is_queued_renewal = true;
+      }
+    }
+  }
+
+  return mapped;
 }
 
 /**

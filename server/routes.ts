@@ -852,9 +852,25 @@ export function createApiRouter(): Router {
     const students = studentRows.map((s) => {
       const id = String(s.id);
       const sPkgs = allPkgs.filter((p) => p.student_id === id);
-      const activePkg = sPkgs.find((p) => p.status === 'ACTIVE') ?? sPkgs[0] ?? null;
+
+      // Pacchetti attivi con lezioni residue ordinati secondo logica FIFO (data acquisto più remota per prima)
+      const activeWithCredits = sPkgs
+        .filter((p) => p.status === 'ACTIVE' && p.remaining_credits > 0)
+        .sort((a, b) => a.purchase_date.localeCompare(b.purchase_date));
+
+      const currentConsumingPkg = activeWithCredits[0] ?? null;
+      const queuedPkgs = activeWithCredits.slice(1);
+      const activePkg =
+        currentConsumingPkg ??
+        sPkgs.find((p) => p.status === 'ACTIVE') ??
+        sPkgs[0] ??
+        null;
+
+      const totalRemaining = activeWithCredits.reduce((acc, p) => acc + p.remaining_credits, 0);
+      const hasEarlyRenewal = queuedPkgs.length > 0;
       const totalUnpaid =
         Math.round(sPkgs.reduce((acc, p) => acc + p.balance_due, 0) * 100) / 100;
+
       return {
         id,
         first_name: String(s.first_name),
@@ -863,6 +879,11 @@ export function createApiRouter(): Router {
         medical_notes: String(s.medical_notes || ''),
         created_at: String(s.created_at),
         active_package: activePkg,
+        active_packages: activeWithCredits,
+        current_consuming_package: currentConsumingPkg,
+        queued_packages: queuedPkgs,
+        total_remaining_credits: totalRemaining,
+        has_early_renewal: hasEarlyRenewal,
         packages_count: sPkgs.length,
         total_unpaid_balance: totalUnpaid,
       };
