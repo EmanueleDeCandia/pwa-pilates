@@ -184,9 +184,12 @@ export function AdminAuditExport({
   const formatMetaDetails = (log: AuditLogEntry): string => {
     const m = log.metadata;
     const parts: string[] = [];
-    if (m.lesson_title) parts.push(`Corso: ${m.lesson_title}`);
-    if (m.room_name) parts.push(`${m.room_name}`);
     if (m.student_name) parts.push(`Allievo: ${m.student_name}`);
+    if (m.lesson_title) parts.push(`Corso: ${m.lesson_title}`);
+    if (m.from_lesson && m.to_lesson) {
+      parts.push(`Riprogrammata da "${m.from_lesson}" a "${m.to_lesson}"`);
+    }
+    if (m.room_name) parts.push(`${m.room_name}`);
     if (m.present_count !== undefined)
       parts.push(`${m.present_count} presenti, ${m.absent_count ?? 0} assenti`);
     if (m.previous_status && m.new_status)
@@ -194,6 +197,8 @@ export function AdminAuditExport({
     if (m.package_name) parts.push(`${m.package_name}`);
     if (m.reason) parts.push(`Motivo: ${m.reason}`);
     if (m.note) parts.push(`Nota: "${m.note}"`);
+    if (m.source === 'public_board') parts.push('Origine: Richiesta Bacheca');
+    if (m.source === 'admin_calendar') parts.push('Origine: Calendario Studio');
     return parts.join(' · ') || '—';
   };
 
@@ -859,6 +864,11 @@ export function AdminAuditExport({
                               >
                                 {am ? am.label : r.attendance_status}
                               </span>
+                              {r.rescheduled_to_title && (
+                                <p className="mt-1 text-[11px] text-[#4A6759] font-medium max-w-xs truncate">
+                                  Riprogrammata su: {r.rescheduled_to_title}
+                                </p>
+                              )}
                               {r.reschedule_note && (
                                 <p className="mt-1 text-[11px] text-[#625B52] italic max-w-xs truncate">
                                   &ldquo;{r.reschedule_note}&rdquo;
@@ -902,6 +912,8 @@ export function AdminAuditExport({
               className="rounded-xl border border-[#DED6C8] bg-[#FCFBF9] px-3 py-2 text-xs text-[#23201D]"
             >
               <option value="ALL">Tutte le azioni</option>
+              <option value="BOOKING_ADDED">Iscrizioni Corsi (Titolare/Bacheca)</option>
+              <option value="BOOKING_REMOVED">Iscrizioni Cancellate</option>
               <option value="ATTENDANCE_VALIDATED">Appelli Validati (Docenti)</option>
               <option value="CREDIT_DEDUCTED">Lezioni Scalate</option>
               <option value="CREDIT_FROZEN">Lezioni Congelate</option>

@@ -308,6 +308,8 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   CREDIT_DEDUCTED: 'Lezione Scalata',
   CREDIT_FROZEN: 'Lezione Congelata',
   RESCHEDULE_REQUESTED: 'Richiesta Spostamento',
+  BOOKING_ADDED: 'Iscrizione a Corso',
+  BOOKING_REMOVED: 'Iscrizione Cancellata',
   BOOKING_RESCHEDULED: 'Lezione Riprogrammata',
   LESSON_UNLOCKED: 'Appello Sbloccato',
   ATTENDANCE_UPDATED: 'Presenza Aggiornata',
@@ -316,6 +318,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   PACKAGE_CREATED: 'Pacchetto Emesso',
   PAYMENT_UPDATED: 'Pagamento Registrato',
   STUDENT_CREATED: 'Nuovo Studente',
+  STUDENT_DELETED: 'Eliminazione / Archiviazione Studente',
   ROOM_CREATED: 'Nuova Sala',
   TEACHER_CREATED: 'Nuova Insegnante',
 };

@@ -51,12 +51,15 @@ export interface Student {
   last_name: string;
   phone: string;
   medical_notes: string;
+  is_archived?: boolean;
+  archived_at?: string | null;
   created_at: string;
   active_package?: PackageWithStats | null;
   active_packages?: PackageWithStats[];
   current_consuming_package?: PackageWithStats | null;
   queued_packages?: PackageWithStats[];
   total_remaining_credits?: number;
+  total_available_credits?: number;
   has_early_renewal?: boolean;
   packages_count?: number;
   total_unpaid_balance?: number;
@@ -73,6 +76,8 @@ export interface Package {
   used_credits: number;
   frozen_credits: number;
   remaining_credits: number;
+  booked_credits?: number;
+  available_credits?: number;
   price: number;
   payment_status: PaymentStatus;
   amount_paid: number;
@@ -204,6 +209,9 @@ export interface AttendanceRegistryRecord {
   student_phone: string | null;
   attendance_status: AttendanceStatus;
   reschedule_note: string | null;
+  rescheduled_to_slot_id?: string | null;
+  rescheduled_to_title?: string | null;
+  rescheduled_to_start_time?: string | null;
   package_id: string;
   package_name: string;
   package_price: number;

@@ -401,12 +401,21 @@ export function createApiRouter(): Router {
             };
           }
 
-          // Cerca pacchetto attivo con crediti; se nuovo allievo crea ingresso singolo da saldare
+          // Cerca pacchetto attivo con crediti liberi (non già impegnati in prenotazioni attive); se assente crea nuovo ingresso mirato da saldare
           let pkg = db
             .prepare(
-              `SELECT id FROM packages
-               WHERE student_id = ? AND status = 'ACTIVE' AND (total_credits - used_credits) > 0
-               ORDER BY purchase_date ASC LIMIT 1`
+              `SELECT sub.id FROM (
+                SELECT p.id,
+                       (p.total_credits - p.used_credits - (
+                         SELECT COUNT(*) FROM bookings b
+                         WHERE b.package_id = p.id AND b.attendance_status NOT IN ('ABSENT_FROZEN', 'RESCHEDULE_REQUESTED')
+                       )) AS free_credits,
+                       p.purchase_date
+                FROM packages p
+                WHERE p.student_id = ? AND p.status = 'ACTIVE' AND (p.total_credits - p.used_credits) > 0
+              ) sub
+              WHERE sub.free_credits > 0
+              ORDER BY sub.purchase_date ASC LIMIT 1`
             )
             .get(student.id) as { id: string } | undefined;
 
@@ -843,11 +852,13 @@ export function createApiRouter(): Router {
   // ANAGRAFICA STUDENTI (SRS 2.3 — Solo ADMIN, RLS protetto)
   // ===========================================================================
 
-  router.get('/students', requireAuth, requireAdmin, (_req, res) => {
+  router.get('/students', requireAuth, requireAdmin, (req, res) => {
     const db = getDb();
-    const studentRows = db
-      .prepare('SELECT * FROM students ORDER BY last_name ASC, first_name ASC')
-      .all() as Record<string, unknown>[];
+    const includeArchived = req.query.archived === 'true';
+    const sql = includeArchived
+      ? 'SELECT * FROM students ORDER BY last_name ASC, first_name ASC'
+      : 'SELECT * FROM students WHERE COALESCE(is_archived, 0) = 0 ORDER BY last_name ASC, first_name ASC';
+    const studentRows = db.prepare(sql).all() as Record<string, unknown>[];
     const allPkgs = queryPackagesWithStats(db);
 
     const students = studentRows.map((s) => {
@@ -868,6 +879,10 @@ export function createApiRouter(): Router {
         null;
 
       const totalRemaining = activeWithCredits.reduce((acc, p) => acc + p.remaining_credits, 0);
+      const totalAvailable = activeWithCredits.reduce(
+        (acc, p) => acc + (p.available_credits ?? p.remaining_credits),
+        0
+      );
       const hasEarlyRenewal = queuedPkgs.length > 0;
       const totalUnpaid =
         Math.round(sPkgs.reduce((acc, p) => acc + p.balance_due, 0) * 100) / 100;
@@ -878,12 +893,15 @@ export function createApiRouter(): Router {
         last_name: String(s.last_name),
         phone: String(s.phone),
         medical_notes: String(s.medical_notes || ''),
+        is_archived: Boolean(s.is_archived),
+        archived_at: s.archived_at ? String(s.archived_at) : null,
         created_at: String(s.created_at),
         active_package: activePkg,
         active_packages: activeWithCredits,
         current_consuming_package: currentConsumingPkg,
         queued_packages: queuedPkgs,
         total_remaining_credits: totalRemaining,
+        total_available_credits: totalAvailable,
         has_early_renewal: hasEarlyRenewal,
         packages_count: sPkgs.length,
         total_unpaid_balance: totalUnpaid,
@@ -1003,10 +1021,73 @@ export function createApiRouter(): Router {
   router.delete('/students/:id', requireAuth, requireAdmin, (req, res) => {
     try {
       const db = getDb();
-      const info = db.prepare('DELETE FROM students WHERE id = ?').run(paramStr(req.params.id));
-      if (info.changes === 0) throw new AppError(404, 'NOT_FOUND', 'Studente non trovato.');
+      const studentId = paramStr(req.params.id);
+      let studentName = '';
+      let actionTaken: 'DELETED' | 'ARCHIVED' = 'DELETED';
+
+      runInTransaction(db, () => {
+        const student = db
+          .prepare('SELECT id, first_name, last_name FROM students WHERE id = ?')
+          .get(studentId) as { id: string; first_name: string; last_name: string } | undefined;
+        if (!student) throw new AppError(404, 'NOT_FOUND', 'Studente non trovato.');
+        studentName = `${student.first_name} ${student.last_name}`;
+
+        // Controlla se esistono registrazioni storiche consolidate:
+        // presenze validate, ore insegnanti validate, o pagamenti registrati
+        const historicalAttendance = db
+          .prepare(
+            `SELECT COUNT(*) AS cnt FROM bookings b
+             JOIN lesson_slots ls ON ls.id = b.lesson_slot_id
+             WHERE b.student_id = ? AND (ls.is_validated = 1 OR b.attendance_status IN ('PRESENT', 'ABSENT_DEDUCTED', 'ABSENT_FROZEN'))`
+          )
+          .get(studentId) as { cnt: number };
+
+        const paidPackages = db
+          .prepare(
+            `SELECT COUNT(*) AS cnt FROM packages
+             WHERE student_id = ? AND (amount_paid > 0 OR payment_status = 'PAID')`
+          )
+          .get(studentId) as { cnt: number };
+
+        const hasHistory = historicalAttendance.cnt > 0 || paidPackages.cnt > 0;
+
+        if (hasHistory) {
+          // SOFT DELETE / ARCHIVIAZIONE:
+          // Salva lo storico per export Excel/CSV e contabilità, rimuove l'allievo dalla rubrica attiva
+          // e cancella solo le eventuali prenotazioni future PENDING non ancora svolte.
+          actionTaken = 'ARCHIVED';
+          const nowIso = new Date().toISOString();
+          db.prepare(
+            'UPDATE students SET is_archived = 1, archived_at = ? WHERE id = ?'
+          ).run(nowIso, studentId);
+
+          // Rimuove prenotazioni future aperte (PENDING su lezioni non ancora validate) per liberare i posti
+          db.prepare(
+            `DELETE FROM bookings
+             WHERE student_id = ? AND attendance_status = 'PENDING'
+               AND lesson_slot_id IN (SELECT id FROM lesson_slots WHERE is_validated = 0)`
+          ).run(studentId);
+
+          recordAuditLog(db, req.user!.id, 'STUDENT_DELETED', studentId, {
+            student_name: studentName,
+            mode: 'ARCHIVED',
+            reason: 'Archiviazione studente con storico presenze/pagamenti conservato',
+          });
+        } else {
+          // HARD DELETE: allievo di prova senza storico consolidato, pulizia completa
+          actionTaken = 'DELETED';
+          db.prepare('DELETE FROM students WHERE id = ?').run(studentId);
+
+          recordAuditLog(db, req.user!.id, 'STUDENT_DELETED', studentId, {
+            student_name: studentName,
+            mode: 'DELETED',
+            reason: 'Eliminazione studente di prova senza storico consolidato',
+          });
+        }
+      });
+
       broadcastSync('all', 'student_deleted');
-      res.json({ ok: true });
+      res.json({ ok: true, student_name: studentName, mode: actionTaken });
     } catch (err) {
       handleError(res, err);
     }
@@ -1563,27 +1644,39 @@ export function createApiRouter(): Router {
           );
         }
 
-        // Selezione automatica pacchetto attivo se non specificato
+        // Selezione automatica pacchetto attivo con crediti liberi se non specificato
         if (!packageId) {
           const activePkg = db
             .prepare(
-              `SELECT id FROM packages
-               WHERE student_id = ? AND used_credits < total_credits AND status = 'ACTIVE'
-               ORDER BY purchase_date ASC LIMIT 1`
+              `SELECT sub.id FROM (
+                SELECT p.id,
+                       (p.total_credits - p.used_credits - (
+                         SELECT COUNT(*) FROM bookings b
+                         WHERE b.package_id = p.id AND b.attendance_status NOT IN ('ABSENT_FROZEN', 'RESCHEDULE_REQUESTED')
+                       )) AS free_credits,
+                       p.purchase_date
+                FROM packages p
+                WHERE p.student_id = ? AND p.status = 'ACTIVE' AND (p.total_credits - p.used_credits) > 0
+              ) sub
+              WHERE sub.free_credits > 0
+              ORDER BY sub.purchase_date ASC LIMIT 1`
             )
             .get(studentId) as { id: string } | undefined;
+
           if (!activePkg) {
             throw new AppError(
               409,
               'NO_ACTIVE_PACKAGE',
-              `${studentFullName} non ha un pacchetto attivo con lezioni disponibili. Crea o rinnova prima il suo pacchetto.`
+              `${studentFullName} non ha crediti disponibili liberi (tutte le lezioni del pacchetto sono già usufruite o impegnate in altre prenotazioni). Crea o rinnova prima il suo pacchetto.`
             );
           }
           packageId = activePkg.id;
         } else {
           const pkg = db
             .prepare(
-              'SELECT id, student_id, total_credits, used_credits, status FROM packages WHERE id = ?'
+              `SELECT p.id, p.student_id, p.total_credits, p.used_credits, p.status,
+                      (SELECT COUNT(*) FROM bookings b WHERE b.package_id = p.id AND b.attendance_status NOT IN ('ABSENT_FROZEN', 'RESCHEDULE_REQUESTED')) AS booked_cnt
+               FROM packages p WHERE p.id = ?`
             )
             .get(packageId) as
             | {
@@ -1592,6 +1685,7 @@ export function createApiRouter(): Router {
                 total_credits: number;
                 used_credits: number;
                 status: string;
+                booked_cnt: number;
               }
             | undefined;
           if (!pkg || pkg.student_id !== studentId) {
@@ -1604,12 +1698,25 @@ export function createApiRouter(): Router {
               'Il pacchetto selezionato è esaurito o scaduto.'
             );
           }
+          if (pkg.total_credits - pkg.used_credits - pkg.booked_cnt <= 0) {
+            throw new AppError(
+              409,
+              'PACKAGE_FULLY_COMMITTED',
+              'Tutti i crediti di questo pacchetto sono già impegnati in altre prenotazioni attive.'
+            );
+          }
         }
 
         db.prepare(
           `INSERT INTO bookings (id, lesson_slot_id, student_id, package_id, attendance_status, updated_at)
            VALUES (?, ?, ?, ?, 'PENDING', ?)`
         ).run(bookingId, lessonSlotId, studentId, packageId, new Date().toISOString());
+
+        recordAuditLog(db, req.user!.id, 'BOOKING_ADDED', lessonSlotId, {
+          student_name: studentFullName,
+          lesson_title: lessonTitle,
+          source: 'admin_calendar',
+        });
       });
 
       // Real-Time Sync istantaneo verso lo schermo dell'insegnante (SRS 5)
@@ -1711,7 +1818,24 @@ export function createApiRouter(): Router {
           ).run(b.package_id);
         }
 
+        const studentInfo = db
+          .prepare(
+            `SELECT s.first_name, s.last_name, ls.title AS lesson_title
+             FROM bookings b
+             JOIN students s ON s.id = b.student_id
+             JOIN lesson_slots ls ON ls.id = b.lesson_slot_id
+             WHERE b.id = ?`
+          )
+          .get(b.id) as { first_name: string; last_name: string; lesson_title: string } | undefined;
+
         db.prepare('DELETE FROM bookings WHERE id = ?').run(b.id);
+
+        if (studentInfo) {
+          recordAuditLog(db, req.user!.id, 'BOOKING_REMOVED', slotId, {
+            student_name: `${studentInfo.first_name} ${studentInfo.last_name}`,
+            lesson_title: studentInfo.lesson_title,
+          });
+        }
       });
 
       broadcastSync('bookings', 'removed', {

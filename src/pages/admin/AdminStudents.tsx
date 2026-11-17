@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
+  AlertTriangle,
+  Archive,
   CreditCard,
   Edit3,
   HeartPulse,
@@ -8,6 +10,7 @@ import {
   Phone,
   Plus,
   Search,
+  Trash2,
   UserPlus,
 } from 'lucide-react';
 import { Modal } from '../../components/Modal';
@@ -43,7 +46,9 @@ export function AdminStudents({ notify, syncTick }: AdminStudentsProps) {
   const [paymentFilter, setPaymentFilter] = useState<'ALL' | PaymentStatus>('ALL');
   const [loading, setLoading] = useState(true);
 
-  // Modale Studente (Nuovo / Modifica)
+  // Modale Eliminazione/Archiviazione Studente (conferma esplicita)
+  const [deleteConfirmStudent, setDeleteConfirmStudent] = useState<Student | null>(null);
+  const [deletingStudent, setDeletingStudent] = useState(false);
   const [studentModal, setStudentModal] = useState<Student | 'NEW' | null>(null);
   const [sFirst, setSFirst] = useState('');
   const [sLast, setSLast] = useState('');
@@ -137,6 +142,31 @@ export function AdminStudents({ notify, syncTick }: AdminStudentsProps) {
       notify('error', err instanceof Error ? err.message : 'Errore salvataggio studente.');
     } finally {
       setSavingStudent(false);
+    }
+  };
+
+  const handleConfirmDeleteStudent = async () => {
+    if (!deleteConfirmStudent) return;
+    setDeletingStudent(true);
+    try {
+      const res = await apiFetch<{ ok: boolean; student_name: string; mode: 'DELETED' | 'ARCHIVED' }>(
+        `/api/students/${deleteConfirmStudent.id}`,
+        { method: 'DELETE' }
+      );
+      if (res.mode === 'ARCHIVED') {
+        notify(
+          'success',
+          `${res.student_name} è stato archiviato: rimosso dall'elenco attivo, lo storico presenze e pagamenti è conservato.`
+        );
+      } else {
+        notify('success', `Allievo di prova ${res.student_name} eliminato con successo.`);
+      }
+      setDeleteConfirmStudent(null);
+      await loadData();
+    } catch (err) {
+      notify('error', err instanceof Error ? err.message : 'Impossibile eliminare lo studente.');
+    } finally {
+      setDeletingStudent(false);
     }
   };
 
@@ -373,6 +403,14 @@ export function AdminStudents({ notify, syncTick }: AdminStudentsProps) {
                         className="rounded-lg border border-[#E2DACD] p-2 text-[#625B52] hover:bg-[#F4F0E8] hover:text-[#23201D]"
                       >
                         <Edit3 className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDeleteConfirmStudent(s)}
+                        title="Elimina o archivia allievo"
+                        className="rounded-lg border border-[#ECDCDA] bg-[#FDF9F8] p-2 text-[#A63A31] hover:bg-[#FBECEB]"
+                      >
+                        <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
                   </div>
@@ -922,6 +960,61 @@ export function AdminStudents({ notify, syncTick }: AdminStudentsProps) {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* MODALE CONFERMA ELIMINAZIONE / ARCHIVIAZIONE STUDENTE */}
+      <Modal
+        open={Boolean(deleteConfirmStudent)}
+        onClose={() => !deletingStudent && setDeleteConfirmStudent(null)}
+        title="Conferma Rimozione Allievo"
+      >
+        {deleteConfirmStudent && (
+          <div className="space-y-4 text-xs text-[#625B52]">
+            <div className="flex items-start gap-3 rounded-2xl bg-[#FDF9F8] border border-[#F2D7D4] p-4 text-[#A63A31]">
+              <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-semibold text-sm">
+                  Vuoi eliminare {deleteConfirmStudent.first_name} {deleteConfirmStudent.last_name}?
+                </p>
+                <p className="text-xs text-[#7D2D26] leading-relaxed">
+                  L&apos;allievo verrà rimosso dall&apos;elenco attivo dello studio e dai menu a tendina.
+                  Le prenotazioni future non ancora svolte verranno cancellate per liberare i posti.
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-[#F8F6F2] border border-[#EAE4DA] p-3 space-y-1.5 text-[11px]">
+              <div className="flex items-center gap-1.5 font-semibold text-[#23201D]">
+                <Archive className="h-3.5 w-3.5 text-[#4A6759]" />
+                Protezione Integrale dello Storico e Fiscale
+              </div>
+              <p className="text-[#625B52] leading-relaxed">
+                Tutte le presenze validate in passato, le ore delle insegnanti e gli incassi storici
+                rimarranno registrati inalterati nei report <strong>Excel (.xls)</strong> e <strong>CSV</strong> scaricabili.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={deletingStudent}
+                onClick={() => setDeleteConfirmStudent(null)}
+                className="rounded-xl border border-[#DED6C8] px-4 py-2 text-sm text-[#625B52] hover:bg-[#F4F0E8] disabled:opacity-50"
+              >
+                Annulla
+              </button>
+              <button
+                type="button"
+                disabled={deletingStudent}
+                onClick={handleConfirmDeleteStudent}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-[#A63A31] px-5 py-2 text-sm font-semibold text-white hover:bg-[#8D2F27] disabled:opacity-50 shadow-sm"
+              >
+                <Trash2 className="h-4 w-4" />
+                {deletingStudent ? 'Rimozione in corso...' : 'Sì, Elimina Allievo'}
+              </button>
+            </div>
+          </div>
+        )}
       </Modal>
     </div>
   );

@@ -125,6 +125,8 @@ export function initializeSchema(db: DatabaseSync): void {
       last_name TEXT NOT NULL,
       phone TEXT NOT NULL,
       medical_notes TEXT NOT NULL DEFAULT '',
+      is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1)),
+      archived_at TEXT DEFAULT NULL,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
     );
 
@@ -347,6 +349,22 @@ export function initializeSchema(db: DatabaseSync): void {
     JOIN students s ON s.id = b.student_id
     JOIN lesson_slots ls ON ls.id = b.lesson_slot_id;
   `);
+
+  // Migrazione retrocompatibile per DB esistenti: colonna is_archived e archived_at su students
+  try {
+    db.exec(`
+      ALTER TABLE students ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0 CHECK (is_archived IN (0, 1));
+    `);
+  } catch {
+    // colonna già presente
+  }
+  try {
+    db.exec(`
+      ALTER TABLE students ADD COLUMN archived_at TEXT DEFAULT NULL;
+    `);
+  } catch {
+    // colonna già presente
+  }
 }
 
 export function recordAuditLog(

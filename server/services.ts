@@ -497,6 +497,7 @@ export function updateBookingAttendance(
           ls.is_validated,
           s.first_name,
           s.last_name,
+          p.name AS package_name,
           p.total_credits,
           p.used_credits,
           p.frozen_credits
@@ -519,6 +520,7 @@ export function updateBookingAttendance(
           is_validated: number;
           first_name: string;
           last_name: string;
+          package_name: string;
           total_credits: number;
           used_credits: number;
           frozen_credits: number;
@@ -566,14 +568,65 @@ export function updateBookingAttendance(
     const nextUsed = row.used_credits + deltaUsed;
     const nextFrozen = Math.max(0, row.frozen_credits + deltaFrozen);
 
+    let targetPackageId = row.package_id;
+    let finalUsed = nextUsed;
+    let finalFrozen = nextFrozen;
+
     if (nextUsed > row.total_credits) {
-      throw new AppError(
-        409,
-        'NO_CREDITS_LEFT',
-        `Crediti esauriti nel pacchetto di ${row.first_name} ${row.last_name}: rinnova il pacchetto prima di scalare la lezione.`
-      );
-    }
-    if (nextUsed < 0) {
+      // 1. Cerca un altro pacchetto attivo dello studente con crediti disponibili (FIFO rinnovo)
+      const altPkg = db
+        .prepare(
+          `SELECT id, name, total_credits, used_credits, frozen_credits
+           FROM packages
+           WHERE student_id = ? AND id != ? AND status = 'ACTIVE' AND (total_credits - used_credits) > 0
+           ORDER BY purchase_date ASC LIMIT 1`
+        )
+        .get(row.student_id, row.package_id) as
+        | {
+            id: string;
+            name: string;
+            total_credits: number;
+            used_credits: number;
+            frozen_credits: number;
+          }
+        | undefined;
+
+      if (altPkg) {
+        targetPackageId = altPkg.id;
+        finalUsed = altPkg.used_credits + usedCreditWeight(newStatus);
+        finalFrozen = Math.max(0, altPkg.frozen_credits + frozenCreditWeight(newStatus));
+        db.prepare('UPDATE bookings SET package_id = ? WHERE id = ?').run(altPkg.id, row.id);
+        recordAuditLog(db, actor.id, 'ATTENDANCE_UPDATED', row.id, {
+          lesson_slot_id: row.lesson_slot_id,
+          lesson_title: row.lesson_title,
+          student_name: `${row.first_name} ${row.last_name}`,
+          note: `Credito scalato dal pacchetto attivo "${altPkg.name}"`,
+        });
+      } else {
+        // 2. Lo studente NON ha altri pacchetti con crediti disponibili.
+        // NON blocchiamo l'appello e le validazioni degli insegnanti/gestore (vicolo cieco evitato!).
+        // Genera automaticamente un ingresso singolo da regolarizzare in contabilità.
+        const newPkgId = crypto.randomUUID();
+        const today = new Date().toISOString().slice(0, 10);
+        db.prepare(
+          `INSERT INTO packages
+            (id, student_id, name, total_credits, used_credits, frozen_credits, price, payment_status, amount_paid, purchase_date, status)
+           VALUES (?, ?, 'Ingresso Singolo (Da Regolarizzare)', 1, 1, 0, 28, 'UNPAID', 0, ?, 'EXHAUSTED')`
+        ).run(newPkgId, row.student_id, today);
+
+        targetPackageId = newPkgId;
+        finalUsed = 1;
+        finalFrozen = 0;
+        db.prepare('UPDATE bookings SET package_id = ? WHERE id = ?').run(newPkgId, row.id);
+
+        recordAuditLog(db, actor.id, 'PACKAGE_CREATED', newPkgId, {
+          student_name: `${row.first_name} ${row.last_name}`,
+          lesson_title: row.lesson_title,
+          package_name: 'Ingresso Singolo (Da Regolarizzare)',
+          reason: 'Creato automaticamente per presenza senza crediti residui (appello non bloccato)',
+        });
+      }
+    } else if (nextUsed < 0) {
       throw new AppError(400, 'INVALID_CREDITS', 'Conteggio crediti non valido.');
     }
 
@@ -598,11 +651,18 @@ export function updateBookingAttendance(
       throw translateSqliteError(err);
     }
 
-    if (deltaUsed !== 0 || deltaFrozen !== 0) {
+    if (targetPackageId === row.package_id) {
+      if (deltaUsed !== 0 || deltaFrozen !== 0) {
+        db.prepare(
+          `UPDATE packages SET used_credits = ?, frozen_credits = ? WHERE id = ?`
+        ).run(finalUsed, finalFrozen, row.package_id);
+        refreshPackageStatus(db, row.package_id);
+      }
+    } else {
       db.prepare(
         `UPDATE packages SET used_credits = ?, frozen_credits = ? WHERE id = ?`
-      ).run(nextUsed, nextFrozen, row.package_id);
-      refreshPackageStatus(db, row.package_id);
+      ).run(finalUsed, finalFrozen, targetPackageId);
+      refreshPackageStatus(db, targetPackageId);
     }
 
     let actionType = 'ATTENDANCE_UPDATED';
@@ -763,7 +823,8 @@ export function rescheduleBookingToSlot(
         `SELECT b.id, b.lesson_slot_id, b.student_id, b.package_id, b.attendance_status,
                 s.first_name, s.last_name,
                 ls.title AS source_title,
-                p.total_credits, p.used_credits
+                p.name AS package_name,
+                p.total_credits, p.used_credits, p.frozen_credits
          FROM bookings b
          JOIN students s ON s.id = b.student_id
          JOIN lesson_slots ls ON ls.id = b.lesson_slot_id
@@ -780,8 +841,10 @@ export function rescheduleBookingToSlot(
           first_name: string;
           last_name: string;
           source_title: string;
+          package_name: string;
           total_credits: number;
           used_credits: number;
+          frozen_credits: number;
         }
       | undefined;
 
@@ -796,12 +859,40 @@ export function rescheduleBookingToSlot(
         'Solo le prenotazioni con richiesta di spostamento o assenza congelata possono essere riprogrammate.'
       );
     }
-    if (src.used_credits >= src.total_credits) {
-      throw new AppError(
-        409,
-        'NO_CREDITS_LEFT',
-        'Il pacchetto dello studente non ha più crediti disponibili.'
+
+    let effectivePackageId = src.package_id;
+
+    if (src.attendance_status === 'ABSENT_FROZEN') {
+      // Se era un'assenza congelata, scala 1 dai crediti congelati del pacchetto di origine
+      db.prepare('UPDATE packages SET frozen_credits = MAX(0, frozen_credits - 1) WHERE id = ?').run(
+        src.package_id
       );
+    } else if (src.used_credits >= src.total_credits) {
+      // Se il pacchetto di origine è esaurito, cerca se lo studente ha un altro pacchetto attivo con crediti liberi
+      const altPkg = db
+        .prepare(
+          `SELECT id, name, total_credits, used_credits
+           FROM packages
+           WHERE student_id = ? AND id != ? AND status = 'ACTIVE' AND (total_credits - used_credits) > 0
+           ORDER BY purchase_date ASC LIMIT 1`
+        )
+        .get(src.student_id, src.package_id) as
+        | { id: string; name: string; total_credits: number; used_credits: number }
+        | undefined;
+
+      if (altPkg) {
+        effectivePackageId = altPkg.id;
+      } else {
+        // Se non ha nessun pacchetto attivo con crediti, genera un ingresso singolo da regolarizzare per non bloccare la titolare
+        const newPkgId = crypto.randomUUID();
+        const today = new Date().toISOString().slice(0, 10);
+        db.prepare(
+          `INSERT INTO packages
+            (id, student_id, name, total_credits, used_credits, frozen_credits, price, payment_status, amount_paid, purchase_date, status)
+           VALUES (?, ?, 'Ingresso Singolo (Da Regolarizzare)', 1, 0, 0, 28, 'UNPAID', 0, ?, 'ACTIVE')`
+        ).run(newPkgId, src.student_id, today);
+        effectivePackageId = newPkgId;
+      }
     }
 
     const target = db
@@ -816,7 +907,7 @@ export function rescheduleBookingToSlot(
       db.prepare(
         `INSERT INTO bookings (id, lesson_slot_id, student_id, package_id, attendance_status, updated_at)
          VALUES (?, ?, ?, ?, 'PENDING', ?)`
-      ).run(newBookingId, targetSlotId, src.student_id, src.package_id, nowIso);
+      ).run(newBookingId, targetSlotId, src.student_id, effectivePackageId, nowIso);
     } catch (err) {
       throw translateSqliteError(err);
     }
@@ -1070,6 +1161,9 @@ export function queryPackagesWithStats(
     const absentFrozen = Number(r.absent_frozen_count);
     const absentPending = Number(r.absent_pending_count);
 
+    const pendingBookings = Number(r.pending_bookings_count);
+    const available = Math.max(0, remaining - pendingBookings);
+
     return {
       id: String(r.id),
       student_id: String(r.student_id),
@@ -1081,6 +1175,8 @@ export function queryPackagesWithStats(
       used_credits: usedCredits,
       frozen_credits: Number(r.frozen_credits),
       remaining_credits: remaining,
+      booked_credits: pendingBookings,
+      available_credits: available,
       price,
       payment_status: String(r.payment_status) as PaymentStatus,
       amount_paid: amountPaid,
@@ -1489,46 +1585,59 @@ export function buildAdminDashboard(
   const countTable = (tbl: string) =>
     Number((db.prepare(`SELECT COUNT(*) AS c FROM ${tbl}`).get() as { c: number }).c);
 
-  // Per l'Analitica Frequenza Pacchetti:
-  // Se uno studente ha rinnovato in anticipo:
-  // 1. I pacchetti di rinnovo in coda non ancora avviati (is_queued_renewal) vengono esclusi
-  //    dalla visualizzazione separata, per non mostrare schede con 0 presenze / 0 assenze.
-  // 2. Il pacchetto attivo in consumo (che ha lo storico reale di presenze e assenze)
-  //    calcola matematicamente le lezioni residue complessive (es. 2 + 10 = 12 residue).
-  // 3. L'ordinamento considera la data più recente tra acquisto e data di rinnovo in coda,
-  //    così l'allievo rinnovato di recente compare in evidenza con lo storico presenze aggiornato.
-  const studentQueuedCredits = new Map<string, number>();
-  const studentLatestRenewalDate = new Map<string, string>();
+  // Per l'Analitica Frequenza: esattamente 1 solo report/card consolidato per studente (nessuna duplicazione di allievi)
+  const pkgsByStudent = new Map<string, PackageWithStats[]>();
   for (const p of allPackages) {
-    if (p.is_queued_renewal) {
-      studentQueuedCredits.set(
-        p.student_id,
-        (studentQueuedCredits.get(p.student_id) || 0) + p.remaining_credits
-      );
-      const currLatest = studentLatestRenewalDate.get(p.student_id) || '';
-      if (p.purchase_date > currLatest) {
-        studentLatestRenewalDate.set(p.student_id, p.purchase_date);
-      }
-    }
+    if (!pkgsByStudent.has(p.student_id)) pkgsByStudent.set(p.student_id, []);
+    pkgsByStudent.get(p.student_id)!.push(p);
   }
 
-  const packageAnalytics = allPackages
-    .filter((p) => !p.is_queued_renewal)
-    .map((p) => {
-      if (p.is_consuming && studentQueuedCredits.has(p.student_id)) {
-        const extra = studentQueuedCredits.get(p.student_id)!;
-        return {
-          ...p,
-          remaining_credits: p.remaining_credits + extra,
-        };
-      }
-      return p;
-    })
-    .sort((a, b) => {
-      const dateA = studentLatestRenewalDate.get(a.student_id) || a.purchase_date;
-      const dateB = studentLatestRenewalDate.get(b.student_id) || b.purchase_date;
-      return dateB.localeCompare(dateA);
+  const packageAnalytics: PackageWithStats[] = [];
+
+  for (const [, sPkgs] of pkgsByStudent.entries()) {
+    const activeWithCredits = sPkgs
+      .filter((p) => p.status === 'ACTIVE' && p.remaining_credits > 0)
+      .sort((a, b) => a.purchase_date.localeCompare(b.purchase_date));
+
+    // Pacchetto primario: quello attivo in consumo, oppure il più recente
+    const primaryPkg =
+      activeWithCredits[0] ||
+      [...sPkgs].sort((a, b) => b.purchase_date.localeCompare(a.purchase_date))[0];
+
+    const totalCredits = sPkgs.reduce((acc, p) => acc + p.total_credits, 0);
+    const presentCount = sPkgs.reduce((acc, p) => acc + p.present_count, 0);
+    const absentDeducted = sPkgs.reduce((acc, p) => acc + p.absent_deducted_count, 0);
+    const absentFrozen = sPkgs.reduce((acc, p) => acc + p.absent_frozen_count, 0);
+    const absentPending = sPkgs.reduce((acc, p) => acc + p.absent_pending_count, 0);
+    const totalAbsences = absentDeducted + absentFrozen + absentPending;
+    const remainingCredits = sPkgs.reduce((acc, p) => acc + p.remaining_credits, 0);
+    const bookedCredits = sPkgs.reduce((acc, p) => acc + (p.booked_credits || 0), 0);
+    const availableCredits = sPkgs.reduce(
+      (acc, p) => acc + (p.available_credits ?? p.remaining_credits),
+      0
+    );
+
+    const latestDate = sPkgs.reduce(
+      (max, p) => (p.purchase_date > max ? p.purchase_date : max),
+      primaryPkg.purchase_date
+    );
+
+    packageAnalytics.push({
+      ...primaryPkg,
+      total_credits: totalCredits,
+      present_count: presentCount,
+      absent_deducted_count: absentDeducted,
+      absent_frozen_count: absentFrozen,
+      absent_pending_count: absentPending,
+      total_absences: totalAbsences,
+      remaining_credits: remainingCredits,
+      booked_credits: bookedCredits,
+      available_credits: availableCredits,
+      purchase_date: latestDate,
     });
+  }
+
+  packageAnalytics.sort((a, b) => b.purchase_date.localeCompare(a.purchase_date));
 
   return {
     today_lessons: todayLessons,
@@ -2020,6 +2129,9 @@ export function queryAttendanceRegistry(
         s.phone AS student_phone,
         b.attendance_status,
         b.reschedule_note,
+        b.rescheduled_to_slot_id,
+        resched_slot.title AS rescheduled_to_title,
+        resched_slot.start_time AS rescheduled_to_start_time,
         p.id AS package_id,
         p.name AS package_name,
         p.price AS package_price,
@@ -2034,6 +2146,7 @@ export function queryAttendanceRegistry(
       JOIN users u ON u.id = ls.teacher_id
       JOIN students s ON s.id = b.student_id
       JOIN packages p ON p.id = b.package_id
+      LEFT JOIN lesson_slots resched_slot ON resched_slot.id = b.rescheduled_to_slot_id
       WHERE ${clauses.join(' AND ')}
       ORDER BY ls.start_time DESC, s.last_name ASC
       ${limitClause}`
@@ -2079,6 +2192,9 @@ export function queryAttendanceRegistry(
       student_phone: r.student_phone ? String(r.student_phone) : null,
       attendance_status: String(r.attendance_status) as AttendanceStatus,
       reschedule_note: r.reschedule_note ? String(r.reschedule_note) : null,
+      rescheduled_to_slot_id: r.rescheduled_to_slot_id ? String(r.rescheduled_to_slot_id) : null,
+      rescheduled_to_title: r.rescheduled_to_title ? String(r.rescheduled_to_title) : null,
+      rescheduled_to_start_time: r.rescheduled_to_start_time ? String(r.rescheduled_to_start_time) : null,
       package_id: String(r.package_id),
       package_name: String(r.package_name),
       package_price: price,

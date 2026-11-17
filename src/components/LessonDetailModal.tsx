@@ -125,7 +125,9 @@ export function LessonDetailModal({
     (s) =>
       !bookedIds.has(s.id) &&
       s.active_package &&
-      s.active_package.remaining_credits > 0 &&
+      (s.active_package.available_credits !== undefined
+        ? s.active_package.available_credits > 0
+        : s.active_package.remaining_credits > 0) &&
       s.active_package.status === 'ACTIVE'
   );
 
