@@ -5,12 +5,12 @@
   "description": "PWA Gestionale Full-Stack per Studio di Pilates e Danza Sportiva",
   "type": "module",
   "scripts": {
-    "dev": "NODE_ENV=development NODE_OPTIONS='--no-warnings=ExperimentalWarning' tsx server/index.ts",
+    "dev": "cross-env NODE_ENV=development NODE_OPTIONS=\"--no-warnings=ExperimentalWarning\" tsx server/index.ts",
     "build": "vite build && tsc -p tsconfig.server.json",
-    "start": "NODE_ENV=production node --no-warnings=ExperimentalWarning dist/server/index.js",
-    "db:reset": "NODE_OPTIONS='--no-warnings=ExperimentalWarning' tsx server/reset-db.ts",
+    "start": "cross-env NODE_ENV=production node --no-warnings=ExperimentalWarning dist/server/index.js",
+    "db:reset": "cross-env NODE_OPTIONS=\"--no-warnings=ExperimentalWarning\" tsx server/reset-db.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
-    "test": "NODE_OPTIONS='--no-warnings=ExperimentalWarning' tsx server/tests/srs.test.ts"
+    "test": "cross-env NODE_OPTIONS=\"--no-warnings=ExperimentalWarning\" tsx server/tests/srs.test.ts"
   },
   "dependencies": {
     "@fontsource/cormorant-garamond": "^5.1.0",
@@ -37,6 +37,7 @@
     "@types/web-push": "^3.6.4",
     "@types/ws": "^8.5.14",
     "@vitejs/plugin-react": "^4.3.4",
+    "cross-env": "^10.1.0",
     "tailwindcss": "^4.0.14",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3",
