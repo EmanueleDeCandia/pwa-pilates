@@ -499,12 +499,17 @@ export function LessonDetailModal({
                       ? 'Nessun altro studente con pacchetto attivo disponibile'
                       : 'Assegna studente alla lezione (credito scalato solo a validazione)...'}
                 </option>
-                {availableStudents.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.last_name} {s.first_name} — {s.active_package?.name} (
-                    {s.active_package?.remaining_credits} residui)
-                  </option>
-                ))}
+                {availableStudents.map((s) => {
+                  const rem = s.total_remaining_credits ?? s.active_package?.remaining_credits ?? 0;
+                  const detail = s.has_early_renewal
+                    ? `${rem} lezioni disponibili (${s.active_package?.remaining_credits} in corso + rinnovo in coda)`
+                    : `${s.active_package?.name} (${rem} residui)`;
+                  return (
+                    <option key={s.id} value={s.id}>
+                      {s.last_name} {s.first_name} — {detail}
+                    </option>
+                  );
+                })}
               </select>
               <button
                 type="submit"

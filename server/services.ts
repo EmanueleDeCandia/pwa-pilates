@@ -1238,8 +1238,32 @@ export function buildAdminDashboard(
   const unpaidPackages = allPackages.filter(
     (p) => p.payment_status === 'UNPAID' || p.payment_status === 'PARTIAL'
   );
+
+  // Calcola per ciascun allievo il totale di crediti attivi residui e se possiede rinnovi in coda
+  const studentTotalCredits = new Map<string, number>();
+  const studentHasQueued = new Set<string>();
+  for (const p of allPackages) {
+    if (p.status === 'ACTIVE') {
+      studentTotalCredits.set(
+        p.student_id,
+        (studentTotalCredits.get(p.student_id) || 0) + p.remaining_credits
+      );
+      if (p.is_queued_renewal) {
+        studentHasQueued.add(p.student_id);
+      }
+    }
+  }
+
+  // Alert Rinnovo: esclude studenti che hanno già rinnovato (in coda o con totale > soglia)
   const lowCreditPackages = allPackages
-    .filter((p) => p.remaining_credits <= settings.renewal_alert_threshold || p.status === 'EXPIRED')
+    .filter((p) => {
+      const studentTotal = studentTotalCredits.get(p.student_id) || 0;
+      const hasQueued = studentHasQueued.has(p.student_id);
+      if (hasQueued || studentTotal > settings.renewal_alert_threshold) {
+        return false;
+      }
+      return p.remaining_credits <= settings.renewal_alert_threshold || p.status === 'EXPIRED';
+    })
     .sort((a, b) => a.remaining_credits - b.remaining_credits);
 
   const totalSalesAmount = Math.round(allPackages.reduce((acc, p) => acc + p.price, 0) * 100) / 100;

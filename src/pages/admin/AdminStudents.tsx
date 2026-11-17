@@ -305,7 +305,28 @@ export function AdminStudents({ notify, syncTick }: AdminStudentsProps) {
         /* GRIGLIA STUDENTI */
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {filteredStudents.map((s) => {
-            const pkg = s.active_package;
+            // Calcolo crediti e pacchetti attivi diretto per massima reattivita e resilienza
+            const studentPkgs = packages.filter((p) => p.student_id === s.id);
+            const activeWithCredits = studentPkgs
+              .filter((p) => p.status === 'ACTIVE' && p.remaining_credits > 0)
+              .sort((a, b) => a.purchase_date.localeCompare(b.purchase_date));
+
+            const currentConsumingPkg =
+              activeWithCredits[0] || s.current_consuming_package || s.active_package;
+            const queuedPkgs =
+              activeWithCredits.length > 1
+                ? activeWithCredits.slice(1)
+                : s.queued_packages && s.queued_packages.length > 0
+                ? s.queued_packages
+                : [];
+
+            const hasEarlyRenewal = queuedPkgs.length > 0 || Boolean(s.has_early_renewal);
+            const totalRemainingCredits =
+              activeWithCredits.length > 0
+                ? activeWithCredits.reduce((acc, p) => acc + p.remaining_credits, 0)
+                : s.total_remaining_credits ?? currentConsumingPkg?.remaining_credits ?? 0;
+
+            const pkg = currentConsumingPkg;
             const pm = pkg ? PAYMENT_META[pkg.payment_status] : null;
             const waGeneral = buildWhatsAppUrl(
               s.phone,
@@ -370,7 +391,7 @@ export function AdminStudents({ notify, syncTick }: AdminStudentsProps) {
 
                 {/* Riepilogo pacchetto attivo o rinnovo anticipato */}
                 <div className="rounded-xl bg-[#F8F6F2] border border-[#EAE4DA] p-3.5">
-                  {s.has_early_renewal && s.queued_packages && s.queued_packages.length > 0 ? (
+                  {hasEarlyRenewal && queuedPkgs.length > 0 ? (
                     <div className="space-y-2.5">
                       {/* Header Rinnovo Anticipato */}
                       <div className="flex items-center justify-between gap-2">
@@ -379,7 +400,7 @@ export function AdminStudents({ notify, syncTick }: AdminStudentsProps) {
                           Rinnovo anticipato attivo
                         </span>
                         <span className="text-[10px] text-[#8E867B] tabular-nums">
-                          {s.active_packages?.length || 2} pacchetti attivi
+                          {activeWithCredits.length || 2} pacchetti attivi
                         </span>
                       </div>
 
@@ -387,17 +408,17 @@ export function AdminStudents({ notify, syncTick }: AdminStudentsProps) {
                       <div className="flex items-baseline justify-between rounded-lg bg-white border border-[#EAE4DA] px-3 py-2">
                         <span className="text-xs text-[#625B52]">Totale lezioni disponibili</span>
                         <span className="text-sm font-bold text-[#2F6649] tabular-nums">
-                          {s.total_remaining_credits} lezioni residue
+                          {totalRemainingCredits} lezioni residue
                         </span>
                       </div>
 
                       {/* Dettaglio pacchetti: In consumo ora + In coda */}
                       <div className="space-y-1.5 pt-0.5">
-                        {s.current_consuming_package && (
+                        {currentConsumingPkg && (
                           <div className="rounded-lg border border-[#E2DACD] bg-[#FCFBF9] p-2.5 space-y-1">
                             <div className="flex items-center justify-between gap-2">
                               <span className="text-[11px] font-semibold text-[#23201D] truncate">
-                                {s.current_consuming_package.name}
+                                {currentConsumingPkg.name}
                               </span>
                               <span className="rounded bg-[#EAF4EE] px-1.5 py-0.5 text-[9px] font-bold text-[#2F6649] uppercase tracking-wide">
                                 In consumo (FIFO)
@@ -405,16 +426,16 @@ export function AdminStudents({ notify, syncTick }: AdminStudentsProps) {
                             </div>
                             <div className="flex items-center justify-between text-[11px] tabular-nums">
                               <span className="text-[#8E867B]">
-                                {s.current_consuming_package.used_credits}/{s.current_consuming_package.total_credits} utilizzate
+                                {currentConsumingPkg.used_credits}/{currentConsumingPkg.total_credits} utilizzate
                               </span>
                               <span className="font-bold text-[#A63A31]">
-                                {s.current_consuming_package.remaining_credits} residue
+                                {currentConsumingPkg.remaining_credits} {currentConsumingPkg.remaining_credits === 1 ? 'residua' : 'residue'}
                               </span>
                             </div>
                             <div className="flex justify-end pt-0.5">
                               <button
                                 type="button"
-                                onClick={() => openEditPackage(s.current_consuming_package!)}
+                                onClick={() => openEditPackage(currentConsumingPkg)}
                                 className="text-[10px] font-medium text-[#625B52] hover:text-[#23201D] underline underline-offset-2"
                               >
                                 Gestisci pacchetto in corso
@@ -423,7 +444,7 @@ export function AdminStudents({ notify, syncTick }: AdminStudentsProps) {
                           </div>
                         )}
 
-                        {s.queued_packages.map((qp) => {
+                        {queuedPkgs.map((qp) => {
                           const qpm = PAYMENT_META[qp.payment_status];
                           return (
                             <div
