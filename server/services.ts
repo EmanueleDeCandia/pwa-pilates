@@ -1477,20 +1477,30 @@ export function buildAdminDashboard(
     Number((db.prepare(`SELECT COUNT(*) AS c FROM ${tbl}`).get() as { c: number }).c);
 
   // Per l'Analitica Frequenza Pacchetti:
-  // Se uno studente ha rinnovato in anticipo, il pacchetto attivo in consumo (che ha lo storico presenze)
-  // calcola matematicamente le lezioni residue complessive (es. 1 + 10 = 11 residue)
-  // e i pacchetti con presenze hanno la priorita rispetto a pacchetti futuri in coda ancora non avviati.
+  // Se uno studente ha rinnovato in anticipo:
+  // 1. I pacchetti di rinnovo in coda non ancora avviati (is_queued_renewal) vengono esclusi
+  //    dalla visualizzazione separata, per non mostrare schede con 0 presenze / 0 assenze.
+  // 2. Il pacchetto attivo in consumo (che ha lo storico reale di presenze e assenze)
+  //    calcola matematicamente le lezioni residue complessive (es. 2 + 10 = 12 residue).
+  // 3. L'ordinamento considera la data più recente tra acquisto e data di rinnovo in coda,
+  //    così l'allievo rinnovato di recente compare in evidenza con lo storico presenze aggiornato.
   const studentQueuedCredits = new Map<string, number>();
+  const studentLatestRenewalDate = new Map<string, string>();
   for (const p of allPackages) {
     if (p.is_queued_renewal) {
       studentQueuedCredits.set(
         p.student_id,
         (studentQueuedCredits.get(p.student_id) || 0) + p.remaining_credits
       );
+      const currLatest = studentLatestRenewalDate.get(p.student_id) || '';
+      if (p.purchase_date > currLatest) {
+        studentLatestRenewalDate.set(p.student_id, p.purchase_date);
+      }
     }
   }
 
   const packageAnalytics = allPackages
+    .filter((p) => !p.is_queued_renewal)
     .map((p) => {
       if (p.is_consuming && studentQueuedCredits.has(p.student_id)) {
         const extra = studentQueuedCredits.get(p.student_id)!;
@@ -1502,11 +1512,9 @@ export function buildAdminDashboard(
       return p;
     })
     .sort((a, b) => {
-      if (a.is_consuming && !b.is_consuming) return -1;
-      if (!a.is_consuming && b.is_consuming) return 1;
-      if (a.is_queued_renewal && !b.is_queued_renewal) return 1;
-      if (!a.is_queued_renewal && b.is_queued_renewal) return -1;
-      return b.purchase_date.localeCompare(a.purchase_date);
+      const dateA = studentLatestRenewalDate.get(a.student_id) || a.purchase_date;
+      const dateB = studentLatestRenewalDate.get(b.student_id) || b.purchase_date;
+      return dateB.localeCompare(dateA);
     });
 
   return {
