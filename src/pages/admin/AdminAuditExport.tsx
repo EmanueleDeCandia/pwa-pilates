@@ -776,12 +776,12 @@ export function AdminAuditExport({
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="border-b border-[#E8E2D9] bg-[#F8F6F2] text-[11px] font-semibold text-[#8E867B] uppercase tracking-wider">
-                        <th className="py-3 px-4 min-w-[130px]">Data &amp; Orario</th>
-                        <th className="py-3 px-4 min-w-[220px]">Corso &amp; Sala</th>
-                        <th className="py-3 px-4 min-w-[150px]">Docente &amp; Appello</th>
-                        <th className="py-3 px-4 min-w-[160px]">Allievo</th>
-                        <th className="py-3 px-4 min-w-[220px]">Contabilità Pacchetto</th>
-                        <th className="py-3 px-4 min-w-[130px]">Esito Presenza</th>
+                        <th className="py-3 px-3 w-[120px]">Data &amp; Orario</th>
+                        <th className="py-3 px-3 min-w-[200px]">Corso &amp; Sala</th>
+                        <th className="py-3 px-3 w-[140px]">Docente &amp; Appello</th>
+                        <th className="py-3 px-3 w-[140px]">Allievo</th>
+                        <th className="py-3 px-3 min-w-[210px]">Contabilità Pacchetto</th>
+                        <th className="py-3 px-3 w-[110px] text-center">Esito Presenza</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#F0EBE1]">
@@ -798,7 +798,7 @@ export function AdminAuditExport({
                         return (
                           <tr key={r.id} className="hover:bg-[#FCFBF9] transition-colors">
                             {/* 1. DATA E ORA */}
-                            <td className="py-3.5 px-4 whitespace-nowrap">
+                            <td className="py-3 px-3 whitespace-nowrap">
                               <p className="font-semibold text-[#23201D] tabular-nums">
                                 {formatDateNumeric(r.start_time)}
                               </p>
@@ -809,7 +809,7 @@ export function AdminAuditExport({
                             </td>
 
                             {/* 2. CORSO E SALA */}
-                            <td className="py-3.5 px-4">
+                            <td className="py-3 px-3">
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <span className="font-semibold text-[#23201D]">
                                   {r.lesson_title}
@@ -824,7 +824,7 @@ export function AdminAuditExport({
                             </td>
 
                             {/* 3. DOCENTE E APPELLO */}
-                            <td className="py-3.5 px-4 whitespace-nowrap">
+                            <td className="py-3 px-3 whitespace-nowrap">
                               <div className="flex items-center gap-1.5">
                                 <span
                                   className="h-2.5 w-2.5 rounded-full shrink-0"
@@ -853,7 +853,7 @@ export function AdminAuditExport({
                             </td>
 
                             {/* 4. ALLIEVO */}
-                            <td className="py-3.5 px-4 whitespace-nowrap">
+                            <td className="py-3 px-3 whitespace-nowrap">
                               <p className="font-semibold text-[#23201D]">
                                 {r.student_last_name} {r.student_first_name}
                               </p>
@@ -875,7 +875,7 @@ export function AdminAuditExport({
                             </td>
 
                             {/* 5. CONTABILITA PACCHETTO & CREDITI (FORMULE DI CALCOLO) */}
-                            <td className="py-3.5 px-4">
+                            <td className="py-3 px-3">
                               <p className="font-medium text-[#23201D] truncate max-w-[200px]">
                                 {r.package_name}
                               </p>
@@ -901,7 +901,7 @@ export function AdminAuditExport({
                             </td>
 
                             {/* 6. ESITO PRESENZA */}
-                            <td className="py-3.5 px-4 whitespace-nowrap">
+                            <td className="py-3 px-3 whitespace-nowrap text-center">
                               <span
                                 className={`inline-flex rounded-full px-2.5 py-0.5 font-bold ${
                                   am ? `${am.bg} ${am.text}` : 'bg-[#EAE4DA] text-[#625B52]'
