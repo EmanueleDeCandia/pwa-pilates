@@ -776,12 +776,12 @@ export function AdminAuditExport({
                   <table className="w-full text-left border-collapse text-xs">
                     <thead>
                       <tr className="border-b border-[#E8E2D9] bg-[#F8F6F2] text-[11px] font-semibold text-[#8E867B] uppercase tracking-wider">
-                        <th className="py-3 px-4">Data &amp; Orario</th>
-                        <th className="py-3 px-4">Corso &amp; Sala</th>
-                        <th className="py-3 px-4">Docente &amp; Appello</th>
-                        <th className="py-3 px-4">Allievo</th>
-                        <th className="py-3 px-4">Contabilità Pacchetto</th>
-                        <th className="py-3 px-4">Esito Presenza</th>
+                        <th className="py-3 px-4 min-w-[130px]">Data &amp; Orario</th>
+                        <th className="py-3 px-4 min-w-[220px]">Corso &amp; Sala</th>
+                        <th className="py-3 px-4 min-w-[150px]">Docente &amp; Appello</th>
+                        <th className="py-3 px-4 min-w-[160px]">Allievo</th>
+                        <th className="py-3 px-4 min-w-[220px]">Contabilità Pacchetto</th>
+                        <th className="py-3 px-4 min-w-[130px]">Esito Presenza</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#F0EBE1]">
