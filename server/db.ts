@@ -4,6 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
+export const BACKUPS_DIR = path.join(DATA_DIR, 'backups');
 export const DEFAULT_DB_PATH = process.env.PILATES_DB_PATH
   ? path.resolve(process.env.PILATES_DB_PATH)
   : path.join(DATA_DIR, 'pilates.sqlite');
@@ -14,7 +15,86 @@ export function ensureDataDir(): string {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
+  if (!fs.existsSync(BACKUPS_DIR)) {
+    fs.mkdirSync(BACKUPS_DIR, { recursive: true });
+  }
   return DATA_DIR;
+}
+
+export function ensureBackupsDir(): string {
+  ensureDataDir();
+  return BACKUPS_DIR;
+}
+
+export interface BackupMetadata {
+  filename: string;
+  filepath: string;
+  sizeBytes: number;
+  createdAt: string;
+  tag?: string;
+}
+
+/**
+ * Crea uno snapshot atomico SQLite usando nativamente VACUUM INTO.
+ * Garantisce consistenza totale anche a connessioni attive e WAL mode.
+ */
+export function createBackupSnapshot(
+  db: DatabaseSync = getDb(),
+  options: { tag?: string; customFilename?: string } = {}
+): BackupMetadata {
+  ensureBackupsDir();
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(
+    now.getHours()
+  )}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  const tagPart = options.tag ? `_${options.tag.replace(/[^a-zA-Z0-9_-]/g, '')}` : '';
+  const filename = options.customFilename || `pilates_backup_${timestamp}${tagPart}.sqlite`;
+  const filepath = path.join(BACKUPS_DIR, filename);
+
+  if (fs.existsSync(filepath)) {
+    fs.unlinkSync(filepath);
+  }
+
+  // Esegue VACUUM INTO sul file target
+  db.exec(`VACUUM INTO '${filepath.replace(/'/g, "''")}';`);
+
+  const stat = fs.statSync(filepath);
+  return {
+    filename,
+    filepath,
+    sizeBytes: stat.size,
+    createdAt: now.toISOString(),
+    tag: options.tag,
+  };
+}
+
+/**
+ * Elenca tutti i backup SQLite presenti in data/backups ordinati dal più recente.
+ */
+export function listBackups(): BackupMetadata[] {
+  ensureBackupsDir();
+  const files = fs.readdirSync(BACKUPS_DIR);
+  const backups: BackupMetadata[] = [];
+
+  for (const file of files) {
+    if (file.endsWith('.sqlite')) {
+      const fullPath = path.join(BACKUPS_DIR, file);
+      try {
+        const stat = fs.statSync(fullPath);
+        backups.push({
+          filename: file,
+          filepath: fullPath,
+          sizeBytes: stat.size,
+          createdAt: stat.mtime.toISOString(),
+        });
+      } catch {
+        // ignore unreadable
+      }
+    }
+  }
+
+  return backups.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 export function getSecrets(): { jwtSecret: string; calendarKey: string } {
@@ -42,9 +122,13 @@ export function createDatabase(dbPath: string = DEFAULT_DB_PATH): DatabaseSync {
   }
 
   const db = new DatabaseSync(dbPath);
-  db.exec('PRAGMA journal_mode = WAL;');
-  db.exec('PRAGMA foreign_keys = ON;');
   db.exec('PRAGMA busy_timeout = 5000;');
+  try {
+    db.exec('PRAGMA journal_mode = WAL;');
+  } catch {
+    // se già in WAL o locked da un altro processo in esecuzione, continua
+  }
+  db.exec('PRAGMA foreign_keys = ON;');
 
   initializeSchema(db);
   return db;

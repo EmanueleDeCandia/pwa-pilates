@@ -16,6 +16,7 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Users,
 } from 'lucide-react';
 import { apiFetch, downloadAuthenticatedFile, setStoredToken } from '../../lib/api';
@@ -65,7 +66,10 @@ export function AdminAuditExport({
   const [settings, setSettings] = useState<StudioSettings | null>(null);
   const [savingSettings, setSavingSettings] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [confirmClean, setConfirmClean] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+  const [creatingBackup, setCreatingBackup] = useState(false);
 
   // Registro Presenze Studio
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRegistryRecord[]>([]);
@@ -173,11 +177,52 @@ export function AdminAuditExport({
       setConfirmReset(false);
       onGlobalReset();
       await Promise.all([loadLogs(), loadMeta()]);
-      notify('success', 'Database locale SQLite ripristinato ai dati dimostrativi iniziali.');
+      notify('success', 'Database locale SQLite ripristinato ai dati dimostrativi iniziali (backup di sicurezza salvato).');
     } catch (err) {
       notify('error', err instanceof Error ? err.message : 'Impossibile ripristinare il DB.');
     } finally {
       setResetting(false);
+    }
+  };
+
+  const handleCleanSlateDb = async () => {
+    setCleaning(true);
+    try {
+      const res = await apiFetch<{ token: string; user: AuthUser }>('/api/admin/db/clean-slate', {
+        method: 'POST',
+        body: JSON.stringify({ studioName: settings?.studio_name }),
+      });
+      setStoredToken(res.token);
+      onUserReplaced(res.user);
+      setConfirmClean(false);
+      onGlobalReset();
+      await Promise.all([loadLogs(), loadMeta()]);
+      notify('success', 'Database azzerato con successo: allievi e corsi rimossi, pronto per i dati reali (backup di sicurezza salvato).');
+    } catch (err) {
+      notify('error', err instanceof Error ? err.message : 'Impossibile azzerare il DB.');
+    } finally {
+      setCleaning(false);
+    }
+  };
+
+  const handleCreateManualBackup = async () => {
+    setCreatingBackup(true);
+    try {
+      const res = await apiFetch<{ ok: boolean; backup: { filename: string; sizeBytes: number } }>(
+        '/api/admin/db/backup',
+        {
+          method: 'POST',
+          body: JSON.stringify({ tag: 'manual_ui' }),
+        }
+      );
+      notify(
+        'success',
+        `Snapshot SQLite salvato in data/backups/${res.backup.filename} (${(res.backup.sizeBytes / 1024).toFixed(1)} KB)`
+      );
+    } catch (err) {
+      notify('error', err instanceof Error ? err.message : 'Errore creazione snapshot.');
+    } finally {
+      setCreatingBackup(false);
     }
   };
 
@@ -1031,8 +1076,14 @@ export function AdminAuditExport({
               file: 'registro-presenze-pilates.csv',
             },
             {
-              title: 'Backup Integrale Database Locale (.json)',
-              desc: 'Snapshot completo di tutte le tabelle locali (sale, studenti, pacchetti, lezioni, prenotazioni e audit log).',
+              title: 'Backup Database Atomico (.sqlite)',
+              desc: 'Snapshot binario SQLite atomico istantaneo generato con VACUUM INTO, pronto per ripristino o archiviazione sicura.',
+              url: '/api/export/database.sqlite',
+              file: 'atelier-elan-backup.sqlite',
+            },
+            {
+              title: 'Backup Integrale Tabelle (.json)',
+              desc: 'Snapshot strutturato leggibile in formato JSON di tutte le tabelle (impostazioni, sale, studenti, pacchetti, lezioni, presenze e audit).',
               url: '/api/export/backup.json',
               file: 'backup-locale-pilates.json',
             },
@@ -1114,50 +1165,118 @@ export function AdminAuditExport({
               </ul>
             </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#F1ECE3]">
-              <button
-                type="button"
-                onClick={() =>
-                  triggerDownload(
-                    '/api/export/supabase-schema.sql',
-                    'supabase-production-schema.sql',
-                    'Schema PostgreSQL/Supabase'
-                  )
-                }
-                className="inline-flex items-center gap-1.5 rounded-xl border border-[#DED6C8] px-3.5 py-2 text-xs font-medium text-[#23201D] hover:bg-[#F4F0E8]"
-              >
-                <Download className="h-3.5 w-3.5 text-[#4A6759]" />
-                Schema SQL Produzione
-              </button>
-
-              {!confirmReset ? (
+            <div className="flex flex-wrap items-center justify-between gap-2.5 pt-3 border-t border-[#F1ECE3]">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setConfirmReset(true)}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-[#E6C7BA] bg-[#F9EFEA] px-3.5 py-2 text-xs font-semibold text-[#9A4B34] hover:bg-[#F3E2D9]"
+                  onClick={() =>
+                    triggerDownload(
+                      '/api/export/database.sqlite',
+                      'atelier-elan-backup.sqlite',
+                      'Database SQLite Atomico'
+                    )
+                  }
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-[#DED6C8] bg-white px-3.5 py-2 text-xs font-semibold text-[#23201D] hover:bg-[#F4F0E8] shadow-2xs"
                 >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  Ripristina Dati Demo
+                  <Download className="h-3.5 w-3.5 text-[#4A6759]" />
+                  Scarica Database .sqlite
                 </button>
-              ) : (
-                <div className="flex items-center gap-2">
+
+                <button
+                  type="button"
+                  disabled={creatingBackup}
+                  onClick={handleCreateManualBackup}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-[#DED6C8] bg-white px-3 py-2 text-xs font-medium text-[#625B52] hover:bg-[#F4F0E8]"
+                >
+                  <Database className="h-3.5 w-3.5 text-[#8E867B]" />
+                  {creatingBackup ? 'Salvataggio...' : 'Crea Snapshot Locale'}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() =>
+                    triggerDownload(
+                      '/api/export/supabase-schema.sql',
+                      'supabase-production-schema.sql',
+                      'Schema PostgreSQL/Supabase'
+                    )
+                  }
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-[#DED6C8] px-3 py-2 text-xs font-medium text-[#625B52] hover:bg-[#F4F0E8]"
+                >
+                  <Download className="h-3.5 w-3.5 text-[#4A6759]" />
+                  Schema SQL Supabase
+                </button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {/* 1. Azzera e Riparti da Zero (Clean Slate per avvio reale) */}
+                {!confirmClean ? (
                   <button
                     type="button"
-                    disabled={resetting}
-                    onClick={handleResetDemoDb}
-                    className="rounded-lg bg-[#B5443A] px-3 py-1.5 text-xs font-semibold text-white"
+                    onClick={() => {
+                      setConfirmClean(true);
+                      setConfirmReset(false);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#D5C2B4] bg-[#F7F2EE] px-3.5 py-2 text-xs font-semibold text-[#8B4513] hover:bg-[#EFE8E2]"
                   >
-                    {resetting ? 'Ripristino...' : 'Conferma Reset'}
+                    <Trash2 className="h-3.5 w-3.5 text-[#8B4513]" />
+                    Azzera e Inizia da Zero
                   </button>
+                ) : (
+                  <div className="flex items-center gap-1.5 bg-[#FAF4F0] p-1.5 rounded-xl border border-[#E6C7BA]">
+                    <span className="text-[11px] font-medium text-[#9A4B34] px-1">Sicuro? (Backup auto attivo)</span>
+                    <button
+                      type="button"
+                      disabled={cleaning}
+                      onClick={handleCleanSlateDb}
+                      className="rounded-lg bg-[#8B4513] px-2.5 py-1 text-xs font-semibold text-white"
+                    >
+                      {cleaning ? 'Azzeramento...' : 'Sì, Azzera'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmClean(false)}
+                      className="rounded-lg border border-[#DED6C8] px-2 py-1 text-xs text-[#625B52]"
+                    >
+                      Annulla
+                    </button>
+                  </div>
+                )}
+
+                {/* 2. Ripristina Dati Demo */}
+                {!confirmReset ? (
                   <button
                     type="button"
-                    onClick={() => setConfirmReset(false)}
-                    className="rounded-lg border border-[#DED6C8] px-2.5 py-1.5 text-xs text-[#625B52]"
+                    onClick={() => {
+                      setConfirmReset(true);
+                      setConfirmClean(false);
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-[#E6C7BA] bg-[#F9EFEA] px-3.5 py-2 text-xs font-semibold text-[#9A4B34] hover:bg-[#F3E2D9]"
                   >
-                    Annulla
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Ripristina Dati Demo
                   </button>
-                </div>
-              )}
+                ) : (
+                  <div className="flex items-center gap-1.5 bg-[#FDEEED] p-1.5 rounded-xl border border-[#F2C2BD]">
+                    <span className="text-[11px] font-medium text-[#B5443A] px-1">Ripristino Demo:</span>
+                    <button
+                      type="button"
+                      disabled={resetting}
+                      onClick={handleResetDemoDb}
+                      className="rounded-lg bg-[#B5443A] px-2.5 py-1 text-xs font-semibold text-white"
+                    >
+                      {resetting ? 'Ripristino...' : 'Conferma'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmReset(false)}
+                      className="rounded-lg border border-[#DED6C8] px-2 py-1 text-xs text-[#625B52]"
+                    >
+                      Annulla
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 

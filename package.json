@@ -9,6 +9,9 @@
     "build": "vite build && tsc -p tsconfig.server.json",
     "start": "cross-env NODE_ENV=production node --no-warnings=ExperimentalWarning dist/server/index.js",
     "db:reset": "cross-env NODE_OPTIONS=\"--no-warnings=ExperimentalWarning\" tsx server/reset-db.ts",
+    "db:clean": "cross-env NODE_OPTIONS=\"--no-warnings=ExperimentalWarning\" tsx server/clean-db.ts",
+    "db:backup": "cross-env NODE_OPTIONS=\"--no-warnings=ExperimentalWarning\" tsx server/backup-db.ts",
+    "db:restore": "cross-env NODE_OPTIONS=\"--no-warnings=ExperimentalWarning\" tsx server/restore-db.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "test": "cross-env NODE_OPTIONS=\"--no-warnings=ExperimentalWarning\" tsx server/tests/srs.test.ts"
   },

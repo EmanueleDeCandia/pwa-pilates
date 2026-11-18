@@ -504,6 +504,23 @@ export function seedDatabase(db: DatabaseSync, options: { force?: boolean } = {}
       });
     });
 
+    // Lezione di ieri per Giulia non convalidata (garantisce unvalidated_past_lessons a qualsiasi ora UTC)
+    createLesson({
+      title: 'Pilates Reformer Base & Postura',
+      teacher: giuliaId,
+      room: salaReformerId,
+      dayOff: -1,
+      startH: 17,
+      startM: 0,
+      validated: false,
+      seriesId: seriesPosturale,
+      notes: 'Focus allungamento catena posteriore con Box.',
+      attendees: [
+        { s: 1, status: 'PENDING' },
+        { s: 3, status: 'PENDING' },
+      ],
+    });
+
     // Lezione di 2 giorni fa (con assenze da decidere e spostamenti in coda per la Titolare!)
     createLesson({
       title: 'Pilates Posturale & Colonna',
@@ -877,4 +894,97 @@ export function seedDatabase(db: DatabaseSync, options: { force?: boolean } = {}
       makeDateAt(now, -4, 11, 20)
     );
   });
+}
+
+export interface CleanSlateOptions {
+  adminEmail?: string;
+  adminPassword?: string;
+  adminFullName?: string;
+  adminPhone?: string;
+  studioName?: string;
+  studioSubtitle?: string;
+  studioCity?: string;
+  ownerWhatsapp?: string;
+}
+
+/**
+ * Resetta il database allo stato "Clean Slate" (Tabula Rasa):
+ * Elimina tutti gli allievi, lezioni, prenotazioni, pacchetti e audit log.
+ * Mantiene (o ricrea) l'account della Titolare e le Sale base, pronto per la gestione reale dello studio.
+ */
+export function cleanSlateDatabase(db: DatabaseSync, options: CleanSlateOptions = {}): { adminUser: typeof DEMO_ACCOUNTS.admin & { id: string } } {
+  const adminEmail = options.adminEmail?.trim().toLowerCase() || DEMO_ACCOUNTS.admin.email;
+  const adminPassword = options.adminPassword || DEMO_ACCOUNTS.admin.password;
+  const adminFullName = options.adminFullName?.trim() || DEMO_ACCOUNTS.admin.full_name;
+  const adminPhone = options.adminPhone?.trim() || DEMO_ACCOUNTS.admin.phone;
+  const studioName = options.studioName?.trim() || 'Atelier Élan';
+  const studioSubtitle = options.studioSubtitle?.trim() || 'Studio Pilates & Danza Sportiva';
+  const studioCity = options.studioCity?.trim() || 'Ancona';
+  const ownerWhatsapp = options.ownerWhatsapp?.trim() || adminPhone;
+
+  const adminHash = bcrypt.hashSync(adminPassword, 10);
+  const adminId = crypto.randomUUID();
+
+  runInTransaction(db, () => {
+    db.exec(`
+      DELETE FROM sent_notifications;
+      DELETE FROM magic_links;
+      DELETE FROM audit_logs;
+      DELETE FROM bookings;
+      DELETE FROM lesson_slots;
+      DELETE FROM packages;
+      DELETE FROM students;
+      DELETE FROM rooms;
+      DELETE FROM users;
+      DELETE FROM studio_settings;
+    `);
+
+    // Impostazioni Studio
+    db.prepare(
+      `INSERT INTO studio_settings
+        (id, studio_name, studio_subtitle, studio_city, owner_whatsapp, min_package_credits, max_package_credits, default_package_credits, renewal_alert_threshold)
+       VALUES (1, ?, ?, ?, ?, 1, 30, 10, 2)`
+    ).run(studioName, studioSubtitle, studioCity, ownerWhatsapp);
+
+    // Utente Titolare (ADMIN)
+    db.prepare(
+      `INSERT INTO users (id, role, full_name, email, password_hash, phone, color, google_calendar_token)
+       VALUES (?, 'ADMIN', ?, ?, ?, ?, '#4A6759', ?)`
+    ).run(adminId, adminFullName, adminEmail, adminHash, adminPhone, `cal_admin_${crypto.randomBytes(16).toString('hex')}`);
+
+    // Sale base dello studio (Reformer e Matwork)
+    const insertRoom = db.prepare(
+      `INSERT INTO rooms (id, name, description, default_capacity, is_active) VALUES (?, ?, ?, ?, 1)`
+    );
+    insertRoom.run(
+      crypto.randomUUID(),
+      'Sala 1 — Reformer',
+      'Reformer Balanced Body, Cadillac Tower e Stability Chair',
+      6
+    );
+    insertRoom.run(
+      crypto.randomUUID(),
+      'Sala 2 — Matwork',
+      'Parquet ammortizzato, sbarre in rovere, Magic Circle, Foam Roller e Fitball',
+      10
+    );
+
+    recordAuditLog(db, adminId, 'SYSTEM_INIT_CLEAN', adminId, {
+      description: 'Database inizializzato in modalità Clean Slate (pronto per produzione)',
+      studio: studioName,
+      admin: adminEmail,
+    });
+  });
+
+  return {
+    adminUser: {
+      id: adminId,
+      email: adminEmail,
+      password: adminPassword,
+      full_name: adminFullName,
+      role: 'ADMIN',
+      phone: adminPhone,
+      color: '#4A6759',
+    },
+  };
 }

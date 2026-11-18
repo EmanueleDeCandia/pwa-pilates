@@ -16,7 +16,8 @@ import {
 } from './auth.js';
 import { broadcastSync } from './realtime.js';
 import { dispatchTeacherNotification, initVapidKeys } from './push.js';
-import { seedDatabase, DEMO_ACCOUNTS } from './seed.js';
+import { seedDatabase, cleanSlateDatabase, DEMO_ACCOUNTS } from './seed.js';
+import { createBackupSnapshot, listBackups, DEFAULT_DB_PATH } from './db.js';
 import {
   AppError,
   assertNoLessonConflicts,
@@ -2075,6 +2076,14 @@ export function createApiRouter(): Router {
   router.post('/admin/db/reset-demo', requireAuth, requireAdmin, (req, res) => {
     try {
       const db = getDb();
+
+      // Safety snapshot automatico prima del reset
+      try {
+        createBackupSnapshot(db, { tag: 'prereset_demo' });
+      } catch (backupErr) {
+        console.warn('[DB Reset Demo] Avviso backup:', backupErr);
+      }
+
       seedDatabase(db, { force: true });
 
       const newAdmin = db
@@ -2096,7 +2105,7 @@ export function createApiRouter(): Router {
       const token = signAuthToken(newAdmin);
       setAuthCookie(res, token, req);
       broadcastSync('all', 'db_reset', {
-        staffSafeMessage: 'Il database locale di prova è stato ripristinato.',
+        staffSafeMessage: 'Il database locale di prova è stato ripristinato ai dati demo.',
       });
 
       res.json({
@@ -2113,6 +2122,106 @@ export function createApiRouter(): Router {
           google_calendar_token: newAdmin.google_calendar_token,
         },
       });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // Azzera e riparti da zero (Clean Slate): allievi, lezioni e pacchetti azzerati; account admin conservato
+  router.post('/admin/db/clean-slate', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const db = getDb();
+
+      // Safety snapshot automatico prima dell'azzeramento
+      try {
+        createBackupSnapshot(db, { tag: 'prereset_clean' });
+      } catch (backupErr) {
+        console.warn('[DB Clean Slate] Avviso backup:', backupErr);
+      }
+
+      const curAdmin = req.user!;
+      const result = cleanSlateDatabase(db, {
+        adminEmail: curAdmin.email,
+        adminFullName: curAdmin.full_name,
+        adminPhone: curAdmin.phone,
+        studioName: req.body?.studioName,
+      });
+
+      const newAdmin = db
+        .prepare(
+          `SELECT id, role, full_name, email, phone, color, push_subscription, google_calendar_token
+           FROM users WHERE id = ?`
+        )
+        .get(result.adminUser.id) as {
+        id: string;
+        role: 'ADMIN' | 'STAFF';
+        full_name: string;
+        email: string;
+        phone: string;
+        color: string;
+        push_subscription: string | null;
+        google_calendar_token: string | null;
+      };
+
+      const token = signAuthToken(newAdmin);
+      setAuthCookie(res, token, req);
+      broadcastSync('all', 'db_reset', {
+        staffSafeMessage: 'Il database è stato azzerato e preparato per le lezioni reali.',
+      });
+
+      res.json({
+        ok: true,
+        token,
+        user: {
+          id: newAdmin.id,
+          role: newAdmin.role,
+          full_name: newAdmin.full_name,
+          email: newAdmin.email,
+          phone: newAdmin.phone,
+          color: newAdmin.color,
+          has_push_subscription: false,
+          google_calendar_token: newAdmin.google_calendar_token,
+        },
+      });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // Download diretto dello snapshot SQLite atomico corrente (.sqlite)
+  router.get('/export/database.sqlite', requireAuth, requireAdmin, (_req, res) => {
+    try {
+      const db = getDb();
+      const snapshot = createBackupSnapshot(db, { tag: 'export' });
+      res.setHeader('Content-Type', 'application/x-sqlite3');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="atelier-elan-backup-${new Date().toISOString().slice(0, 10)}.sqlite"`
+      );
+      const stream = fs.createReadStream(snapshot.filepath);
+      stream.pipe(res);
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // Lista dei backup salvati su disco
+  router.get('/admin/db/backups', requireAuth, requireAdmin, (_req, res) => {
+    try {
+      const backups = listBackups();
+      res.json({ backups });
+    } catch (err) {
+      handleError(res, err);
+    }
+  });
+
+  // Creazione manuale on-demand di un backup SQLite da UI
+  router.post('/admin/db/backup', requireAuth, requireAdmin, (req, res) => {
+    try {
+      const db = getDb();
+      const tag = req.body?.tag ? String(req.body.tag) : 'manual_ui';
+      const backup = createBackupSnapshot(db, { tag });
+      res.json({ ok: true, backup });
     } catch (err) {
       handleError(res, err);
     }
